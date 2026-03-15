@@ -20,18 +20,19 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 ### Fase 2 — Google Earth Engine (CONCLUIDA)
 - Servico GEE (`backend/services/gee.py`) integrado com projeto `c3po-461514`
 - 7 layers funcionais com tiles servidos diretamente pelo GEE (sem download local):
-  - RGB Verdadeira (Sentinel-2, seca jun-set, <20% nuvens)
-  - RGB Falsa-cor (SWIR/NIR/Red, seca)
-  - Oxidos de Ferro (B4/B2, min=1.5, max=2.9, seca + mascara NDVI)
-  - Argilas/Sericita (B11/B12, min=1.2, max=1.6, seca + mascara NDVI)
+  - RGB Verdadeira (Sentinel-2, ago-out 2017-2024, <20% nuvens)
+  - RGB Falsa-cor (SWIR/NIR/Red, ago-out 2017-2024)
+  - Oxidos de Ferro (B4/B2, min=1.65, max=2.45, mascara NDVI<0.4)
+  - Argilas/Sericita (B11/B12, min=1.26, max=1.60, mascara NDVI<0.4)
   - Carbonatos (ASTER B13/B14, min=0.94, max=0.98, mascara NDVI)
   - Silica (ASTER B13/B10, min=1.37, max=1.41, mascara NDVI)
   - DEM/Hillshade (SRTM 30m)
-- Filtro de vegetacao implementado:
-  - Estacao seca (jun-set 2022-2024) para Sentinel-2 — NDVI mediana cai de 0.66 para 0.41
-  - Mascara NDVI < 0.4 nos ratios espectrais para excluir vegetacao densa (~32% da area preservada = solo exposto)
+- Filtro de vegetacao e janela temporal otimizados:
+  - Pico da seca (ago-out 2017-2024, excluindo 2018 outlier chuvoso) — 512 imagens
+  - Mascara NDVI < 0.4 nos ratios espectrais — 62% da area = solo exposto
   - ASTER usa mascara NDVI derivada do Sentinel-2 (melhor resolucao espacial)
   - RGB composicoes usam seca mas SEM mascara (para contexto visual)
+  - Analise confirmou mascara urbana desnecessaria (0.11% da AOI)
 - Toggle de layers via checkbox no frontend (enable/disable com tiles dinamicos)
 - Slider de opacidade afeta todas as layers ativas
 - Troca de basemap preserva layers ativas
@@ -114,8 +115,8 @@ python -m pytest tests/ -v      # 13 testes
 - **Por que MapLibre GL JS?** Open-source, performatico para tiles raster, suporte a layers
 - **Por que GEE + download local?** GEE para exploracao rapida, download para analises detalhadas (ASTER/Crosta)
 - **Tiles direto do GEE:** `getMapId()` retorna URL template `{z}/{x}/{y}` compativel com MapLibre raster source
-- **Estacao seca (jun-set):** Cerrado tem forte sazonalidade, NDVI cai ~35% na seca expondo mais solo
-- **Mascara NDVI < 0.4:** Preserva ~32% da area (solo exposto + veg rala), melhora FeOx em +12%
+- **Janela ago-out 2017-2024:** Otimizada por analise mensal (set e o mes mais seco, jun atrapalha). 2018 excluido (outlier chuvoso). 512 imagens no composite
+- **Mascara NDVI < 0.4:** 62% da area = solo exposto. Analise confirmou que qualityMosaic introduz artefatos (sombras). Mascara urbana desnecessaria (0.11% AOI)
 - **Modelo de prospectividade:** Knowledge-driven (fuzzy/weighted overlay) como base, data-driven (RF/SVM) como complemento
 - **Pesos do modelo:** Ajustaveis pelo usuario no frontend (sao hipoteses geologicas, nao constantes)
 
