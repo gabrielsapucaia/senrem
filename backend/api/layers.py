@@ -1,4 +1,3 @@
-import json
 import os
 import threading
 
@@ -13,8 +12,6 @@ gee_service = GEEService()
 
 _generated_tiles = {}
 _preload_status = {"running": False, "done": 0, "total": 0}
-
-CACHE_PATH = os.path.join(settings.data_dir, "gee_tile_cache.json")
 
 LOCAL_LAYER_CONFIGS = {
     "crosta-feox": {
@@ -77,25 +74,31 @@ LAYERS = [
 ]
 
 
-def _load_cache():
-    """Carrega cache de tile URLs do disco."""
-    if os.path.exists(CACHE_PATH):
-        with open(CACHE_PATH) as f:
-            return json.load(f)
-    return {}
-
-
-def _save_cache():
-    """Salva cache de tile URLs GEE no disco."""
-    gee_tiles = {k: v for k, v in _generated_tiles.items() if k in GEE_LAYER_CONFIGS}
-    os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
-    with open(CACHE_PATH, "w") as f:
-        json.dump(gee_tiles, f, indent=2)
+def _get_gee_cog_path(layer_id: str) -> str:
+    """Caminho do COG para layers GEE."""
+    processed_dir = os.path.join(settings.data_dir, "rasters", "processed")
+    return os.path.join(processed_dir, f"{layer_id}.tif")
 
 
 def _check_local_available(layer_id: str, processed_dir: str) -> bool:
     cog_path = os.path.join(processed_dir, f"{layer_id}.tif")
     return os.path.exists(cog_path)
+
+
+def _register_gee_cog(layer_id: str, cog_path: str):
+    """Registra COG GEE no tile_service e atualiza _generated_tiles."""
+    from backend.main import tile_service
+    is_rgb = gee_service.is_rgb_layer(layer_id)
+    default_range = gee_service.get_rgb_range(layer_id) if is_rgb else None
+    tile_service.register_cog(layer_id, cog_path, is_rgb=is_rgb, default_range=default_range)
+
+    config = GEE_LAYER_CONFIGS[layer_id]
+    _generated_tiles[layer_id] = {
+        "layer_id": layer_id,
+        "name": config["name"],
+        "description": config["description"],
+        "tile_url": f"/api/tiles/{layer_id}/{{z}}/{{x}}/{{y}}.png",
+    }
 
 
 @router.get("/layers")
@@ -109,13 +112,16 @@ def list_layers():
         if layer["source"] == "gee":
             available = layer["id"] in _generated_tiles
             can_generate = layer["id"] in gee_layers
+            supports_colormap = not gee_service.is_rgb_layer(layer["id"]) if layer["id"] in gee_layers else False
         elif layer["source"] == "local" and layer["id"] in LOCAL_LAYER_CONFIGS:
             available = layer["id"] in _generated_tiles or _check_local_available(layer["id"], processed_dir)
             can_generate = has_earthdata or available
+            supports_colormap = True
         else:
             available = False
             can_generate = False
-        result.append({**layer, "available": available, "can_generate": can_generate})
+            supports_colormap = False
+        result.append({**layer, "available": available, "can_generate": can_generate, "supports_colormap": supports_colormap})
     return {"layers": result, "loading": loading,
             "loaded": _preload_status["done"], "total": _preload_status["total"]}
 
@@ -128,15 +134,18 @@ def generate_layer(layer_id: str):
 
     gee_layers = gee_service.get_available_layers()
 
-    # Layer GEE
+    # Layer GEE: download como COG
     if layer_id in gee_layers:
-        try:
-            tile_data = gee_service.get_layer_tiles(layer_id)
-            _generated_tiles[layer_id] = tile_data
-            _save_cache()
-            return tile_data
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        cog_path = _get_gee_cog_path(layer_id)
+
+        if not os.path.exists(cog_path):
+            try:
+                gee_service.download_layer_cog(layer_id, cog_path)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        _register_gee_cog(layer_id, cog_path)
+        return _generated_tiles[layer_id]
 
     # Layer local
     if layer_id in LOCAL_LAYER_CONFIGS:
@@ -180,47 +189,77 @@ def generate_layer(layer_id: str):
 
 @router.post("/layers/refresh")
 def refresh_layers():
-    """Limpa cache GEE e regenera todas as layers em background."""
+    """Apaga COGs GEE e re-baixa do zero."""
     if _preload_status["running"]:
         return {"status": "already_running", "loaded": _preload_status["done"], "total": _preload_status["total"]}
 
-    # Limpar cache GEE (manter locais)
+    # Apagar COGs GEE do disco
     for layer_id in list(_generated_tiles.keys()):
         if layer_id in GEE_LAYER_CONFIGS:
+            cog_path = _get_gee_cog_path(layer_id)
+            if os.path.exists(cog_path):
+                os.remove(cog_path)
             del _generated_tiles[layer_id]
 
-    if os.path.exists(CACHE_PATH):
-        os.remove(CACHE_PATH)
-
-    _start_gee_preload()
+    _start_gee_download()
     return {"status": "started", "total": _preload_status["total"]}
 
 
-def _start_gee_preload():
-    """Inicia pre-carregamento GEE em background thread."""
-    gee_ids = list(GEE_LAYER_CONFIGS.keys())
+def _start_gee_download():
+    """Inicia download paralelo de COGs GEE em background.
+
+    Baixa ate 3 layers simultaneamente. Cada layer com grid
+    tambem usa paralelismo interno (4 threads por grid).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    gee_ids = [lid for lid in GEE_LAYER_CONFIGS if lid not in _generated_tiles]
+    if not gee_ids:
+        print("Todas as layers GEE ja tem COGs no disco.")
+        return
+
     _preload_status["total"] = len(gee_ids)
     _preload_status["done"] = 0
     _preload_status["running"] = True
 
-    def _preload_gee():
-        for layer_id in gee_ids:
-            if layer_id in _generated_tiles:
-                _preload_status["done"] += 1
-                continue
+    def _download_one(layer_id):
+        cog_path = _get_gee_cog_path(layer_id)
+        print(f"  Baixando GEE: {layer_id}...")
+        gee_service.download_layer_cog(layer_id, cog_path)
+        _register_gee_cog(layer_id, cog_path)
+        _preload_status["done"] += 1
+        print(f"  GEE downloaded: {layer_id} ({_preload_status['done']}/{_preload_status['total']})")
+
+    def _download_all():
+        # Layers simples (sem grid) em paralelo: ate 3 simultaneas
+        # Layers com grid: 1 por vez (ja usam 4 threads internamente)
+        simple = [lid for lid in gee_ids if gee_service._get_download_config(lid)[1] == 1]
+        grid = [lid for lid in gee_ids if gee_service._get_download_config(lid)[1] > 1]
+
+        # Baixar layers simples em paralelo (rapidas, ~10-30s cada)
+        if simple:
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                futures = {executor.submit(_download_one, lid): lid for lid in simple}
+                for future in as_completed(futures):
+                    lid = futures[future]
+                    try:
+                        future.result()
+                    except Exception as e:
+                        _preload_status["done"] += 1
+                        print(f"  AVISO: Falha ao baixar {lid}: {e}")
+
+        # Baixar layers com grid (pesadas, ja paralelas internamente)
+        for layer_id in grid:
             try:
-                tile_data = gee_service.get_layer_tiles(layer_id)
-                _generated_tiles[layer_id] = tile_data
-                _preload_status["done"] += 1
-                _save_cache()
-                print(f"  GEE pre-loaded: {layer_id} ({_preload_status['done']}/{_preload_status['total']})")
+                _download_one(layer_id)
             except Exception as e:
                 _preload_status["done"] += 1
-                print(f"  AVISO: Falha ao pre-carregar {layer_id}: {e}")
-        _preload_status["running"] = False
-        print("Pre-carregamento completo!")
+                print(f"  AVISO: Falha ao baixar {layer_id}: {e}")
 
-    thread = threading.Thread(target=_preload_gee, daemon=True)
+        _preload_status["running"] = False
+        print("Download GEE completo!")
+
+    thread = threading.Thread(target=_download_all, daemon=True)
     thread.start()
 
 
@@ -242,12 +281,24 @@ def preload_layers(tile_service):
             }
             print(f"  Local registrada: {layer_id}")
 
-    # 2. Carregar cache GEE do disco (se existir)
-    cached = _load_cache()
-    if cached:
-        _generated_tiles.update(cached)
-        print(f"  Cache GEE carregado: {len(cached)} layers")
-        return
+    # 2. Registrar COGs GEE existentes no disco (instantaneo)
+    for layer_id in GEE_LAYER_CONFIGS:
+        cog_path = os.path.join(processed_dir, f"{layer_id}.tif")
+        if os.path.exists(cog_path):
+            is_rgb = gee_service.is_rgb_layer(layer_id)
+            default_range = gee_service.get_rgb_range(layer_id) if is_rgb else None
+            tile_service.register_cog(layer_id, cog_path, is_rgb=is_rgb, default_range=default_range)
+            config = GEE_LAYER_CONFIGS[layer_id]
+            _generated_tiles[layer_id] = {
+                "layer_id": layer_id,
+                "name": config["name"],
+                "description": config["description"],
+                "tile_url": f"/api/tiles/{layer_id}/{{z}}/{{x}}/{{y}}.png",
+            }
+            print(f"  GEE COG registrada: {layer_id}")
 
-    # 3. Sem cache: pre-gerar layers GEE em background
-    _start_gee_preload()
+    # 3. Se houver COGs GEE faltantes, apenas logar (nao baixa automaticamente)
+    missing = [lid for lid in GEE_LAYER_CONFIGS if lid not in _generated_tiles]
+    if missing:
+        print(f"  {len(missing)} layers GEE sem COG: {', '.join(missing)}")
+        print("  Use POST /api/layers/refresh para baixar, ou clique 'Atualizar Layers'.")

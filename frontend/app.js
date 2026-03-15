@@ -339,11 +339,11 @@ async function openPropertiesPanel(layerId) {
     }
 
     const layer = layersData.find(l => l.id === layerId);
-    const isLocal = layer && layer.source === "local";
+    const supportsColormap = layer && layer.supports_colormap;
 
     document.getElementById("props-layer-name").textContent = layer ? layer.name : layerId;
 
-    if (isLocal && !layerStats[layerId]) {
+    if (supportsColormap && !layerStats[layerId]) {
         try {
             const resp = await fetch(`/api/tiles/${layerId}/stats`);
             if (resp.ok) {
@@ -365,7 +365,7 @@ async function openPropertiesPanel(layerId) {
     document.getElementById("prop-saturation-val").textContent = (p.saturation / 100).toFixed(2);
 
     const localControls = document.getElementById("props-local-controls");
-    if (isLocal) {
+    if (supportsColormap) {
         localControls.style.display = "block";
         document.getElementById("prop-colormap").value = p.colormap;
 

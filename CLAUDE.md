@@ -91,16 +91,23 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 - Tipo homogeneo: `.toFloat()` obrigatorio apos normalizacao (GEE rejeita `Float<range>` heterogeneo no `median()`)
 - **Resultado:** layers GEE mais suaves e coerentes, mas locais continuam superiores (cobertura continua vs gaps GEE)
 - Gaps de cobertura sao inerentes ao catalogo ASTER L1T no GEE (menos cenas validas, especialmente na seca)
-- Cache persistente de tile URLs GEE em `data/gee_tile_cache.json`
-- Cache salvo **incrementalmente** (apos cada layer) — resiste a restart do uvicorn
-- Pre-load automatico na startup: COGs locais instantaneo + GEE em background thread
-- Botao "Atualizar Layers" no frontend para renovar cache GEE sob demanda
-- Endpoint: POST `/api/layers/refresh` — limpa cache GEE e regenera em background
-- GET `/api/layers` retorna `{layers: [...], loading: bool, loaded: int, total: int}`
-- Frontend com polling automatico (3s) durante carregamento + labels verdes para layers prontas
+- **Layers GEE servidas localmente como COGs** (nao usa mais getMapId)
+- Download via `ee.Image.getDownloadURL()` → salva como GeoTIFF em `data/rasters/processed/`
+- Download em grid paralelo para layers pesadas (S2 mediana 512 imgs excede memoria GEE):
+  - S2 RGB: 20m, grid 4x4 (16 partes, 4 threads paralelas)
+  - S2 ratios: 20m, grid 3x3 (9 partes)
+  - ASTER VNIR (crosta-feox, ninomiya-ferrous): 30m, grid 2x2 (4 partes)
+  - ASTER SWIR/TIR/DEM: download direto sem grid (60-100m)
+- Mosaic local com `rasterio.merge` apos download em grid
+- TileService com suporte a COGs RGB (3 bandas) e single-band (colormap)
+- TileOutsideBounds retorna tile transparente (nao 500)
+- Startup NAO baixa automaticamente — apenas registra COGs existentes do disco
+- Botao "Atualizar Layers" apaga COGs GEE e re-baixa do zero (POST /api/layers/refresh)
+- GET `/api/layers` retorna `{layers: [...], loading, loaded, total}` + campo `supports_colormap`
+- Frontend usa `supports_colormap` para mostrar controles de colormap/min-max
 - Sidebar organizado em grupos: Sentinel-2, ASTER (GEE), ASTER (Local), Terreno, CPRM, Prospectividade
-- 19 layers disponiveis ao abrir o browser (cache carregado do disco)
-- 34 testes passando
+- 13 layers GEE + 6 locais + 6 futuras = 25 layers no sidebar
+- 38 testes passando
 
 ### Painel de Propriedades de Layer (CONCLUIDO)
 - Segundo sidebar acoplado ao primeiro, aparece ao clicar no nome de uma layer ativa
@@ -109,16 +116,15 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
   - Brilho min/max (0-1, default 0/1)
   - Contraste (-1 a +1, default 0)
   - Saturacao (-1 a +1, default 0)
-- Controles extras (layers locais, source=local, via query params no tile endpoint):
+- Controles extras (layers single-band, via query params no tile endpoint):
   - Colormap (viridis, magma, plasma, inferno, turbo, cividis, greys)
   - Min/Max rescale (sliders com range dinamico baseado em p2/p98)
+- Controles extras disponíveis para TODAS as layers single-band (GEE e locais) gracas ao COG local
+- Layers RGB (rgb-true, rgb-false): apenas controles universais (colormap nao se aplica)
+- Frontend usa campo `supports_colormap` da API (nao mais `source === "local"`)
 - Endpoint de tiles aceita query params: `?colormap=X&vmin=Y&vmax=Z`
-- Novo endpoint: GET `/api/tiles/{layer_id}/stats` retorna `{p2, p98}`
-- Slider de opacidade global removido (substituido por opacidade per-layer)
-- State per-layer preservado ao trocar entre layers no painel
+- Endpoint: GET `/api/tiles/{layer_id}/stats` retorna `{p2, p98}`
 - 38 testes passando
-- Design: `docs/plans/2026-03-15-layer-properties-design.md`
-- Plano: `docs/plans/2026-03-15-layer-properties-implementation.md`
 
 ### Fases futuras
 - **Fase 4:** Dados CPRM (geologia, ocorrencias, geofisica via WMS/WFS e PGBC)
@@ -137,17 +143,17 @@ senrem3/
 │   │   └── layers.py        # GET /api/layers, POST /api/layers/{id}/generate
 │   ├── services/
 │   │   ├── gee.py           # GEEService: 13 layers GEE (S2+ASTER L1T+GED)
-│   │   │                    # PCA via eigen, ratios, cache, percentil stretch
+│   │   │                    # PCA via eigen, ratios, download COG com grid paralelo
 │   │   ├── aster.py         # AsterService: download via CMR API
 │   │   ├── processing.py    # ProcessingService: PCA, Crosta, ratios Ninomiya
-│   │   ├── tiles.py         # TileService: serve tiles locais via rio-tiler
+│   │   ├── tiles.py         # TileService: serve tiles locais via rio-tiler (RGB + singleband)
 │   │   └── pipeline.py      # AsterPipeline: orquestra download->processamento->COG
 │   └── models/              # (vazio, para Fase 5: prospectivity.py)
 ├── frontend/
 │   ├── index.html           # SPA: header, sidebar, mapa, status bar
 │   ├── style.css            # Tema escuro (#1a1a2e, #16213e, #e94560)
 │   └── app.js               # MapLibre GL JS, enableLayer/disableLayer, basemaps
-├── tests/                   # 34 testes (pytest + FastAPI TestClient)
+├── tests/                   # 38 testes (pytest + FastAPI TestClient)
 ├── data/                    # rasters/, vectors/, tiles/ (gitignored)
 ├── docs/plans/              # Design + planos de cada fase
 ├── requirements.txt
@@ -175,8 +181,8 @@ python -m pytest tests/ -v      # 38 testes
 | GET | `/api/health` | Health check |
 | GET | `/api/config` | Retorna centro, raio, nome da area de estudo |
 | GET | `/api/layers` | Lista 25 layers `{layers, loading, loaded, total}` |
-| POST | `/api/layers/{id}/generate` | Gera tiles GEE/locais e retorna tile_url (usa cache) |
-| POST | `/api/layers/refresh` | Limpa cache GEE e regenera em background |
+| POST | `/api/layers/{id}/generate` | Baixa COG GEE/local e retorna tile_url local |
+| POST | `/api/layers/refresh` | Apaga COGs GEE e re-baixa do zero em background |
 | GET | `/api/tiles/{layer_id}/{z}/{x}/{y}.png` | Serve tiles de COGs locais (aceita ?colormap, ?vmin, ?vmax) |
 | GET | `/api/tiles/{layer_id}/stats` | Retorna percentis p2/p98 da layer para sliders min/max |
 
@@ -189,7 +195,7 @@ python -m pytest tests/ -v      # 38 testes
 - Tema visual escuro (#1a1a2e, #16213e, #e94560)
 - `app.mount("/", StaticFiles(...))` DEVE ser a ultima linha apos todos os `include_router`
 - Commits em portugues, formato convencional (feat:, chore:, fix:)
-- Tiles GEE servidos via `ee.Image.getMapId()` — sem download local
+- Tiles GEE servidos localmente via COGs (download via `getDownloadURL`, nao mais `getMapId`)
 - Vis params dos ratios DEVEM ser calibrados com percentis reais (p2/p98) via GEE reduceRegion
 - Ratios espectrais DEVEM usar estacao seca + mascara NDVI<0.4 para minimizar vegetacao
 
@@ -197,8 +203,8 @@ python -m pytest tests/ -v      # 38 testes
 
 - **Por que FastAPI + vanilla JS?** Controle total, sem overhead de framework frontend, deploy simples
 - **Por que MapLibre GL JS?** Open-source, performatico para tiles raster, suporte a layers
-- **Por que GEE + download local?** GEE para exploracao rapida, download para analises detalhadas (ASTER/Crosta)
-- **Tiles direto do GEE:** `getMapId()` retorna URL template `{z}/{x}/{y}` compativel com MapLibre raster source
+- **Por que GEE → COG local?** GEE computa (median, PCA, ratios), baixa como GeoTIFF, serve via rio-tiler. Permite colormap/min-max para TODAS as layers.
+- **Grid paralelo:** S2 mediana 512 imgs excede memoria do `getDownloadURL`. Solucao: dividir em grid (3x3 ou 4x4), baixar 4 threads paralelas, mosaic com rasterio
 - **Janela ago-out 2017-2024:** Otimizada por analise mensal (set e o mes mais seco, jun atrapalha). 2018 excluido (outlier chuvoso). 512 imagens no composite
 - **Mascara NDVI < 0.4:** 62% da area = solo exposto. Analise confirmou que qualityMosaic introduz artefatos (sombras). Mascara urbana desnecessaria (0.11% AOI)
 - **Modelo de prospectividade:** Knowledge-driven (fuzzy/weighted overlay) como base, data-driven (RF/SVM) como complemento

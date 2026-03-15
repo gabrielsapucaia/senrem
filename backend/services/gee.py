@@ -1,4 +1,7 @@
+import os
+
 import ee
+import requests as http_requests
 
 from backend.config import settings
 
@@ -397,3 +400,136 @@ class GEEService:
 
     def get_available_layers(self):
         return list(LAYER_CONFIGS.keys())
+
+    def _get_download_config(self, layer_id):
+        """Retorna (scale, grid_size) para download de cada layer.
+
+        Layers com computacao pesada (S2 mediana 512 imgs, ASTER PCA com
+        normalizacao) precisam de grid para nao exceder memoria do GEE.
+        """
+        if layer_id == "gee-pca-tir":
+            return 100, 1
+        elif layer_id in ("gee-crosta-oh", "gee-ninomiya-aloh", "gee-ninomiya-mgoh"):
+            return 60, 1
+        elif layer_id in ("gee-crosta-feox", "gee-ninomiya-ferrous"):
+            return 30, 2  # ASTER VNIR: 30m, 2x2 grid (normalizacao pesada)
+        elif layer_id.startswith("gee-"):
+            return 30, 1
+        elif layer_id == "dem":
+            return 30, 1
+        elif "ASTER" in LAYER_CONFIGS[layer_id].get("collection", ""):
+            return 90, 1
+        elif self.is_rgb_layer(layer_id):
+            return 20, 4  # S2 RGB: 20m, 4x4 grid
+        else:
+            return 20, 3  # S2 ratios: 20m, 3x3 grid
+
+    def is_rgb_layer(self, layer_id):
+        """True se a layer e multi-banda RGB."""
+        config = LAYER_CONFIGS[layer_id]
+        bands = config.get("bands")
+        return (
+            bands is not None
+            and len(bands) >= 3
+            and "ratio" not in config
+            and not config.get("is_hillshade")
+        )
+
+    def get_rgb_range(self, layer_id):
+        """Retorna (min, max) para rescaling de layers RGB."""
+        config = LAYER_CONFIGS[layer_id]
+        vis = config.get("vis", {})
+        return (vis.get("min", 0), vis.get("max", 3000))
+
+    def _download_region(self, image, output_path, scale, region):
+        """Download de uma regiao como GeoTIFF."""
+        url = image.getDownloadURL({
+            "scale": scale,
+            "region": region,
+            "crs": "EPSG:4326",
+            "format": "GEO_TIFF",
+            "filePerBand": False,
+        })
+        response = http_requests.get(url, timeout=300)
+        response.raise_for_status()
+        with open(output_path, "wb") as f:
+            f.write(response.content)
+
+    def _download_grid_and_mosaic(self, image, output_path, scale, grid_size):
+        """Download paralelo em grid de sub-regioes e mosaic local."""
+        import rasterio
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from rasterio.merge import merge
+
+        bounds_info = self._region.bounds().getInfo()["coordinates"][0]
+        west, south = bounds_info[0]
+        east, north = bounds_info[2]
+        dx = (east - west) / grid_size
+        dy = (north - south) / grid_size
+
+        # Preparar todas as sub-regioes
+        tasks = []
+        for i in range(grid_size):
+            for j in range(grid_size):
+                sub_west = west + i * dx
+                sub_south = south + j * dy
+                sub_region = ee.Geometry.Rectangle([
+                    sub_west, sub_south, sub_west + dx, sub_south + dy,
+                ])
+                part_path = output_path.replace(".tif", f"_part_{i}_{j}.tif")
+                tasks.append((part_path, sub_region))
+
+        total = len(tasks)
+        done = [0]
+
+        def _download_part(args):
+            part_path, sub_region = args
+            self._download_region(image, part_path, scale, sub_region)
+            done[0] += 1
+            print(f"    Grid {done[0]}/{total} OK")
+            return part_path
+
+        # Download paralelo (max 4 threads para nao sobrecarregar GEE)
+        max_workers = min(4, total)
+        part_paths = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_download_part, t): t for t in tasks}
+            for future in as_completed(futures):
+                part_paths.append(future.result())
+
+        # Mosaic
+        datasets = [rasterio.open(p) for p in part_paths]
+        mosaic, mosaic_transform = merge(datasets)
+        for ds in datasets:
+            ds.close()
+
+        # Salvar mosaic
+        with rasterio.open(part_paths[0]) as ref:
+            profile = ref.profile.copy()
+        profile.update(
+            height=mosaic.shape[1],
+            width=mosaic.shape[2],
+            transform=mosaic_transform,
+        )
+        with rasterio.open(output_path, "w", **profile) as dst:
+            dst.write(mosaic)
+
+        # Cleanup
+        for p in part_paths:
+            os.remove(p)
+
+    def download_layer_cog(self, layer_id, output_path):
+        """Download de imagem GEE processada como GeoTIFF.
+
+        Usa grid de sub-regioes para layers pesadas (S2 median de 512 imagens).
+        """
+        image = self._build_image(layer_id)
+        scale, grid_size = self._get_download_config(layer_id)
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        if grid_size == 1:
+            self._download_region(image, output_path, scale, self._region.bounds())
+        else:
+            print(f"    Download em grid {grid_size}x{grid_size} a {scale}m...")
+            self._download_grid_and_mosaic(image, output_path, scale, grid_size)
