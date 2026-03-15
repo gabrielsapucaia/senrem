@@ -58,7 +58,12 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 - AST_07XT v004 vem em GeoTIFs separados por banda (nao HDF), UTM, int16
 - AST_08 trocado por AST_05 (emissividade) para PCA TIR
 - Composite com reprojecao para grid EPSG:4326 ~30m (1699x1664) + normalizacao por cena (media/std)
-- Mascara NDVI<0.4 nas layers AST_07XT (52.6% vegetacao mascarada, consistente com Fase 2)
+- **Mascara NDVI<0.4 em TODAS as layers** (AST_07XT e AST_05), 36.8% vegetacao mascarada / 63.2% solo exposto
+- NDVI composite separado (`AST_07XT_ndvi.tif`), computado pre-normalizacao, apenas cenas estacao seca (ago-out)
+- Filtro sazonal ago-out (13 cenas de 49) para NDVI — consistente com GEE Fase 2 (62% exposto)
+- Sem filtro sazonal, mediana NDVI de todas as 49 cenas mascarava 82.7% (cenas chuvosas inflam NDVI)
+- NDVI computado por cena antes da normalizacao mean/std (normalizacao distorce relacoes inter-banda)
+- Parsing mes do filename: `filename[12:14]` (formato AST_07XT_004MMDDYYYY...)
 - Filtro mediana 3x3 no resultado final para suavizar artefatos residuais
 - Tiles com colormap viridis via rio-tiler (rescale p2/p98 por layer)
 - 49 cenas AST_07XT (2000-2008, ~4GB) + 223 cenas AST_05 (2000-2024)

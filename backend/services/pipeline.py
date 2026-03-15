@@ -80,6 +80,9 @@ class AsterPipeline:
     def is_processed(self, layer_id: str) -> bool:
         return os.path.exists(self.get_processed_path(layer_id))
 
+    def _get_ndvi_path(self) -> str:
+        return os.path.join(self.data_dir, "aster", "composite", "AST_07XT_ndvi.tif")
+
     def _compute_ref_grid(
         self, res_deg: float = 0.00027
     ) -> Tuple[CRS, rasterio.transform.Affine, int, int]:
@@ -152,9 +155,113 @@ class AsterPipeline:
 
         return np.nanmedian(stacked, axis=0).astype(np.float32)
 
+    def _build_ndvi_composite(
+        self,
+        scenes: List[Dict[str, str]],
+        ref_crs: CRS,
+        ref_transform: rasterio.transform.Affine,
+        ref_height: int,
+        ref_width: int,
+    ) -> np.ndarray:
+        """Computa NDVI por cena (pre-normalizacao) e retorna mediana.
+
+        Mais preciso que computar NDVI do composite normalizado, pois
+        a normalizacao mean/std por banda distorce as relacoes inter-banda.
+        """
+        ndvi_arrays = []
+        for scene in scenes:
+            if "SRF_VNIR_B02" not in scene or "SRF_VNIR_B03N" not in scene:
+                continue
+            red = np.empty((ref_height, ref_width), dtype=np.float32)
+            nir = np.empty((ref_height, ref_width), dtype=np.float32)
+            for band_name, dst in [("SRF_VNIR_B02", red), ("SRF_VNIR_B03N", nir)]:
+                with rasterio.open(scene[band_name]) as src:
+                    reproject(
+                        source=rasterio.band(src, 1),
+                        destination=dst,
+                        src_transform=src.transform,
+                        src_crs=src.crs,
+                        dst_transform=ref_transform,
+                        dst_crs=ref_crs,
+                        resampling=Resampling.bilinear,
+                        dst_nodata=np.nan,
+                    )
+            valid = (nir + red) > 0
+            with np.errstate(divide="ignore", invalid="ignore"):
+                ndvi = np.where(valid, (nir - red) / (nir + red), np.nan)
+            ndvi_arrays.append(ndvi)
+
+        if not ndvi_arrays:
+            raise ValueError("Nenhuma cena com B02+B03N para NDVI")
+
+        stacked = np.stack(ndvi_arrays, axis=0)
+        return np.nanmedian(stacked, axis=0).astype(np.float32)
+
+    @staticmethod
+    def _get_scene_month(scene: Dict[str, str]) -> int:
+        """Extrai mes da cena a partir do nome do arquivo (AST_07XT_004MMDD...)."""
+        path = next(iter(scene.values()))
+        filename = os.path.basename(path)
+        # Formato: AST_07XT_004MMDDYYYY... → MM nos chars 12-13
+        return int(filename[12:14])
+
+    def _build_ndvi_from_scenes(self, scenes: List[Dict[str, str]]) -> None:
+        """Gera composite NDVI pre-normalizacao a partir de cenas AST_07XT.
+
+        Filtra apenas cenas da estacao seca (ago-out) para consistencia
+        com a mascara GEE Fase 2 (Sentinel-2 ago-out). O composite das
+        bandas espectrais continua usando TODAS as cenas.
+        """
+        ndvi_path = self._get_ndvi_path()
+        if os.path.exists(ndvi_path):
+            return
+
+        # Filtrar cenas da estacao seca (ago=8, set=9, out=10)
+        dry_scenes = [s for s in scenes if self._get_scene_month(s) in (8, 9, 10)]
+        print(f"  NDVI: {len(dry_scenes)} cenas seca (ago-out) de {len(scenes)} total")
+
+        if not dry_scenes:
+            print("  AVISO: Nenhuma cena seca, usando todas as cenas para NDVI")
+            dry_scenes = scenes
+
+        ref_crs, ref_transform, ref_height, ref_width = self._compute_ref_grid()
+        print("  Gerando composite NDVI (estacao seca, pre-normalizacao)...")
+        ndvi = self._build_ndvi_composite(
+            dry_scenes, ref_crs, ref_transform, ref_height, ref_width
+        )
+        self.processing_service.save_as_cog(
+            ndvi, ndvi_path, transform=ref_transform, crs=ref_crs,
+        )
+        print(f"  NDVI composite salvo: {ndvi_path}")
+
+    def _ensure_ndvi_composite(self) -> bool:
+        """Garante que o composite NDVI existe, baixando cenas AST_07XT se necessario."""
+        if os.path.exists(self._get_ndvi_path()):
+            return True
+
+        self.aster_service.ensure_dirs()
+        start_date, end_date = PRODUCT_DATE_RANGES["AST_07XT"]
+        scenes = self.aster_service.download_all_scenes(
+            product="AST_07XT",
+            center_lon=self.center_lon,
+            center_lat=self.center_lat,
+            radius_km=self.radius_km,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if not scenes:
+            print("  AVISO: Nenhuma cena AST_07XT para gerar NDVI")
+            return False
+
+        self._build_ndvi_from_scenes(scenes)
+        return True
+
     def download_and_composite(self, product: str) -> str:
         """Baixa cenas ASTER e gera composite mediana multi-banda."""
-        if self.aster_service.has_cached_composite(product):
+        composite_cached = self.aster_service.has_cached_composite(product)
+        ndvi_exists = os.path.exists(self._get_ndvi_path())
+
+        if composite_cached and (product != "AST_07XT" or ndvi_exists):
             return self.aster_service.get_composite_path(product)
 
         self.aster_service.ensure_dirs()
@@ -171,6 +278,13 @@ class AsterPipeline:
 
         if not scenes:
             raise RuntimeError(f"Nenhuma cena {product} encontrada na area de estudo")
+
+        # Gerar NDVI composite pre-normalizacao (AST_07XT)
+        if product == "AST_07XT":
+            self._build_ndvi_from_scenes(scenes)
+
+        if composite_cached:
+            return self.aster_service.get_composite_path(product)
 
         band_names = BAND_ORDER[product]
         print(f"Gerando composite mediana de {len(scenes)} cenas, {len(band_names)} bandas...")
@@ -212,20 +326,20 @@ class AsterPipeline:
         output_path = self.get_processed_path(layer_id)
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-        # Mascara de vegetacao NDVI < 0.4 (AST_07XT: B02=Red, B03N=NIR)
-        if product == "AST_07XT":
-            red = data[1].astype(np.float32)   # B02
-            nir = data[2].astype(np.float32)   # B03N
-            ndvi = np.where(
-                (nir + red) > 0,
-                (nir - red) / (nir + red),
-                np.nan,
-            )
+        # Mascara de vegetacao NDVI < 0.4 (composite NDVI pre-normalizacao)
+        # Aplica em TODAS as layers (AST_07XT e AST_05), consistente com GEE Fase 2
+        self._ensure_ndvi_composite()
+        ndvi_path = self._get_ndvi_path()
+        if os.path.exists(ndvi_path):
+            with rasterio.open(ndvi_path) as ndvi_src:
+                ndvi = ndvi_src.read(1)
             veg_mask = ndvi >= 0.4
             for i in range(data.shape[0]):
                 data[i][veg_mask] = np.nan
             pct_masked = np.sum(veg_mask) / veg_mask.size * 100
             print(f"  Mascara NDVI<0.4: {pct_masked:.1f}% vegetacao mascarada")
+        else:
+            print("  AVISO: NDVI composite nao disponivel, sem mascara de vegetacao")
 
         if layer_id == "crosta-feox":
             vnir = data[:3]  # B1, B2, B3
