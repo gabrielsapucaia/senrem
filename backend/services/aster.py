@@ -15,8 +15,8 @@ BAND_SUFFIXES = {
         "SRF_SWIR_B07", "SRF_SWIR_B08", "SRF_SWIR_B09",
     ],
     "AST_05": [
-        "Emissivity_B10", "Emissivity_B11", "Emissivity_B12",
-        "Emissivity_B13", "Emissivity_B14",
+        "SRE_TIR_B10", "SRE_TIR_B11", "SRE_TIR_B12",
+        "SRE_TIR_B13", "SRE_TIR_B14",
     ],
 }
 

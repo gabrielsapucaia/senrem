@@ -1,11 +1,13 @@
 """Pipeline completo ASTER: download + composite + processamento."""
 
+import math
 import os
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import numpy as np
 import rasterio
 from rasterio.crs import CRS
+from rasterio.transform import from_bounds
 from rasterio.warp import calculate_default_transform, reproject, Resampling
 
 from backend.services.aster import AsterService, BAND_SUFFIXES
@@ -34,8 +36,8 @@ BAND_ORDER = {
         "SRF_SWIR_B07", "SRF_SWIR_B08", "SRF_SWIR_B09",
     ],
     "AST_05": [
-        "Emissivity_B10", "Emissivity_B11", "Emissivity_B12",
-        "Emissivity_B13", "Emissivity_B14",
+        "SRE_TIR_B10", "SRE_TIR_B11", "SRE_TIR_B12",
+        "SRE_TIR_B13", "SRE_TIR_B14",
     ],
 }
 
@@ -77,22 +79,61 @@ class AsterPipeline:
     def is_processed(self, layer_id: str) -> bool:
         return os.path.exists(self.get_processed_path(layer_id))
 
+    def _compute_ref_grid(
+        self, res_deg: float = 0.00027
+    ) -> Tuple[CRS, rasterio.transform.Affine, int, int]:
+        """Calcula grid de referencia em EPSG:4326 para a AOI.
+
+        Args:
+            res_deg: Resolucao em graus (~30m no equador).
+
+        Returns:
+            (crs, transform, height, width)
+        """
+        dlat = self.radius_km / 111.32
+        dlon = self.radius_km / (111.32 * math.cos(math.radians(self.center_lat)))
+        west = self.center_lon - dlon
+        east = self.center_lon + dlon
+        south = self.center_lat - dlat
+        north = self.center_lat + dlat
+
+        width = int(round((east - west) / res_deg))
+        height = int(round((north - south) / res_deg))
+        transform = from_bounds(west, south, east, north, width, height)
+        return CRS.from_epsg(4326), transform, height, width
+
     def _build_band_composite(
-        self, scenes: List[Dict[str, str]], band_name: str
+        self,
+        scenes: List[Dict[str, str]],
+        band_name: str,
+        ref_crs: CRS,
+        ref_transform: rasterio.transform.Affine,
+        ref_height: int,
+        ref_width: int,
     ) -> np.ndarray:
-        """Calcula mediana de uma banda across todas as cenas."""
+        """Calcula mediana de uma banda reprojetando cada cena para o grid comum."""
         band_arrays = []
         for scene in scenes:
             if band_name not in scene:
                 continue
             with rasterio.open(scene[band_name]) as src:
-                band_arrays.append(src.read(1).astype(np.float32))
+                dst = np.empty((ref_height, ref_width), dtype=np.float32)
+                reproject(
+                    source=rasterio.band(src, 1),
+                    destination=dst,
+                    src_transform=src.transform,
+                    src_crs=src.crs,
+                    dst_transform=ref_transform,
+                    dst_crs=ref_crs,
+                    resampling=Resampling.bilinear,
+                    dst_nodata=np.nan,
+                )
+                band_arrays.append(dst)
 
         if not band_arrays:
             raise ValueError(f"Nenhuma cena com banda {band_name}")
 
         stacked = np.stack(band_arrays, axis=0)
-        # Substituir zeros e nodata por NaN antes da mediana
         stacked[stacked <= 0] = np.nan
         return np.nanmedian(stacked, axis=0).astype(np.float32)
 
@@ -119,19 +160,15 @@ class AsterPipeline:
         band_names = BAND_ORDER[product]
         print(f"Gerando composite mediana de {len(scenes)} cenas, {len(band_names)} bandas...")
 
-        # Usar primeira cena como referencia de geometria
-        first_band = band_names[0]
-        ref_path = scenes[0][first_band]
-        with rasterio.open(ref_path) as ref:
-            ref_transform = ref.transform
-            ref_crs = ref.crs
-            ref_height = ref.height
-            ref_width = ref.width
+        ref_crs, ref_transform, ref_height, ref_width = self._compute_ref_grid()
+        print(f"  Grid de referencia: {ref_width}x{ref_height} pixels, EPSG:4326, ~30m")
 
         composites = []
         for band_name in band_names:
             print(f"  Composite {band_name}...")
-            median = self._build_band_composite(scenes, band_name)
+            median = self._build_band_composite(
+                scenes, band_name, ref_crs, ref_transform, ref_height, ref_width
+            )
             composites.append(median)
 
         composite_stack = np.stack(composites, axis=0)

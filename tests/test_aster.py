@@ -39,7 +39,7 @@ def test_band_suffixes():
     assert len(BAND_SUFFIXES["AST_07XT"]) == 9
     assert len(BAND_SUFFIXES["AST_05"]) == 5
     assert "SRF_VNIR_B01" in BAND_SUFFIXES["AST_07XT"]
-    assert "Emissivity_B10" in BAND_SUFFIXES["AST_05"]
+    assert "SRE_TIR_B10" in BAND_SUFFIXES["AST_05"]
 
 
 def test_cache_dir_structure(tmp_path):
