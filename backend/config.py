@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     data_dir: str = "data"
+    gee_project: str = "c3po-461514"
 
     study_area_center_lat: float = -11.699153
     study_area_center_lon: float = -47.155531
