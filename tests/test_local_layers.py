@@ -12,7 +12,7 @@ def test_layers_list_includes_local():
     client = TestClient(app)
     resp = client.get("/api/layers")
     assert resp.status_code == 200
-    layers = resp.json()
+    layers = resp.json()["layers"]
     local_layers = [l for l in layers if l["source"] == "local"]
     assert len(local_layers) >= 6
     layer_ids = [l["id"] for l in local_layers]

@@ -79,6 +79,47 @@ body {
     color: #888;
 }
 
+.layer-group-header {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #e94560;
+    padding: 8px 0 4px 0;
+    margin-top: 4px;
+    border-top: 1px solid #0f3460;
+    font-weight: 600;
+}
+
+.layer-group-header:first-child {
+    border-top: none;
+    margin-top: 0;
+}
+
+.refresh-btn {
+    width: 100%;
+    padding: 6px 12px;
+    background: #0f3460;
+    color: #e0e0e0;
+    border: 1px solid #1a4a8a;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    margin-bottom: 8px;
+}
+
+.refresh-btn:hover:not(:disabled) {
+    background: #1a4a8a;
+}
+
+.refresh-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.layer-ready {
+    color: #6ece58;
+}
+
 .layer-item {
     display: flex;
     align-items: center;

@@ -8,7 +8,9 @@ client = TestClient(app)
 def test_list_layers():
     response = client.get("/api/layers")
     assert response.status_code == 200
-    data = response.json()
+    resp = response.json()
+    assert "layers" in resp
+    data = resp["layers"]
     assert isinstance(data, list)
     assert len(data) > 0
     layer = data[0]
@@ -21,7 +23,7 @@ def test_list_layers():
 
 def test_layers_have_categories():
     response = client.get("/api/layers")
-    data = response.json()
+    data = response.json()["layers"]
     categories = {l["category"] for l in data}
     assert "spectral" in categories
     assert "terrain" in categories
@@ -29,6 +31,6 @@ def test_layers_have_categories():
 
 def test_gee_layers_can_generate():
     response = client.get("/api/layers")
-    data = response.json()
+    data = response.json()["layers"]
     rgb = next(l for l in data if l["id"] == "rgb-true")
     assert rgb["can_generate"] is True

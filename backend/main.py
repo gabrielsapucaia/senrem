@@ -5,7 +5,7 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from backend.api.config_routes import router as config_router
-from backend.api.layers import router as layers_router
+from backend.api.layers import preload_layers, router as layers_router
 from backend.config import settings
 from backend.services.tiles import TileService
 
@@ -16,6 +16,12 @@ app.include_router(layers_router)
 tile_service = TileService(
     processed_dir=os.path.join(settings.data_dir, "rasters", "processed")
 )
+
+
+@app.on_event("startup")
+def startup_preload():
+    print("Iniciando pre-carregamento de layers...")
+    preload_layers(tile_service)
 
 
 @app.get("/api/tiles/{layer_id}/{z}/{x}/{y}.png")

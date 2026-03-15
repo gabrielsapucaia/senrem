@@ -30,6 +30,8 @@ let map;
 let studyArea = null;
 let currentBasemap = "satellite";
 let activeLayers = {};
+let layersData = [];
+let pollInterval = null;
 
 async function init() {
     const config = await fetch("/api/config").then(r => r.json());
@@ -58,7 +60,7 @@ async function init() {
 
     setupBasemapSwitcher();
     setupOpacitySlider();
-    await setupLayersList();
+    await refreshLayersList();
 }
 
 function addStudyAreaCircle(config) {
@@ -145,18 +147,65 @@ function setupBasemapSwitcher() {
     layersPanel.insertBefore(container, layersPanel.querySelector("#layers-list"));
 }
 
-async function setupLayersList() {
+async function refreshLayersList() {
     const list = document.getElementById("layers-list");
-    const layers = await fetch("/api/layers").then(r => r.json());
+    const resp = await fetch("/api/layers").then(r => r.json());
+    const layers = resp.layers;
+    const isLoading = resp.loading;
+
+    // Atualizar status de carregamento
+    if (isLoading) {
+        updateStatus(`Carregando layers GEE... ${resp.loaded}/${resp.total}`);
+        startPolling();
+    } else if (pollInterval) {
+        stopPolling();
+        updateStatus("Pronto");
+    }
+
+    // Se lista ja existe, apenas atualizar estados
+    if (list.children.length > 0) {
+        layers.forEach(layer => {
+            const checkbox = document.getElementById(`layer-${layer.id}`);
+            if (checkbox && !checkbox.checked) {
+                checkbox.disabled = !layer.can_generate && !layer.available;
+            }
+        });
+        layersData = layers;
+        return;
+    }
+
+    // Primeira renderizacao: criar elementos
+    layersData = layers;
+    let currentGroup = null;
+
+    // Botao refresh no topo
+    const refreshBtn = document.createElement("button");
+    refreshBtn.className = "refresh-btn";
+    refreshBtn.textContent = "Atualizar Layers";
+    refreshBtn.onclick = async () => {
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = "Atualizando...";
+        await fetch("/api/layers/refresh", { method: "POST" });
+        startPolling();
+    };
+    list.appendChild(refreshBtn);
 
     layers.forEach(layer => {
+        if (layer.group && layer.group !== currentGroup) {
+            currentGroup = layer.group;
+            const header = document.createElement("div");
+            header.className = "layer-group-header";
+            header.textContent = currentGroup;
+            list.appendChild(header);
+        }
+
         const item = document.createElement("div");
         item.className = "layer-item";
 
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
         checkbox.id = `layer-${layer.id}`;
-        checkbox.disabled = !layer.can_generate;
+        checkbox.disabled = !layer.can_generate && !layer.available;
 
         checkbox.addEventListener("change", async () => {
             if (checkbox.checked) {
@@ -170,10 +219,34 @@ async function setupLayersList() {
         label.htmlFor = `layer-${layer.id}`;
         label.textContent = layer.name;
 
+        if (layer.available) {
+            label.classList.add("layer-ready");
+        }
+
         item.appendChild(checkbox);
         item.appendChild(label);
         list.appendChild(item);
     });
+}
+
+function startPolling() {
+    if (pollInterval) return;
+    pollInterval = setInterval(async () => {
+        await refreshLayersList();
+    }, 3000);
+}
+
+function stopPolling() {
+    if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+    }
+    // Re-habilitar botao refresh
+    const btn = document.querySelector(".refresh-btn");
+    if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Atualizar Layers";
+    }
 }
 
 async function enableLayer(layerId, checkbox) {

@@ -21,6 +21,6 @@ def test_generate_unknown_layer():
 
 def test_layers_list_shows_can_generate():
     response = client.get("/api/layers")
-    data = response.json()
+    data = response.json()["layers"]
     rgb = next(l for l in data if l["id"] == "rgb-true")
     assert rgb["can_generate"] is True
