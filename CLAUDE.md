@@ -20,20 +20,22 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 ### Fase 2 — Google Earth Engine (CONCLUIDA)
 - Servico GEE (`backend/services/gee.py`) integrado com projeto `c3po-461514`
 - 7 layers funcionais com tiles servidos diretamente pelo GEE (sem download local):
-  - RGB Verdadeira (Sentinel-2, mediana 2024, <20% nuvens)
-  - RGB Falsa-cor (SWIR/NIR/Red)
-  - Oxidos de Ferro (B4/B2, min=1.2, max=2.6)
-  - Argilas/Sericita (B11/B12, min=1.3, max=2.3)
-  - Carbonatos (ASTER B13/B14, min=0.94, max=0.98)
-  - Silica (ASTER B13/B10, min=1.37, max=1.41)
+  - RGB Verdadeira (Sentinel-2, seca jun-set, <20% nuvens)
+  - RGB Falsa-cor (SWIR/NIR/Red, seca)
+  - Oxidos de Ferro (B4/B2, min=1.5, max=2.9, seca + mascara NDVI)
+  - Argilas/Sericita (B11/B12, min=1.2, max=1.6, seca + mascara NDVI)
+  - Carbonatos (ASTER B13/B14, min=0.94, max=0.98, mascara NDVI)
+  - Silica (ASTER B13/B10, min=1.37, max=1.41, mascara NDVI)
   - DEM/Hillshade (SRTM 30m)
+- Filtro de vegetacao implementado:
+  - Estacao seca (jun-set 2022-2024) para Sentinel-2 — NDVI mediana cai de 0.66 para 0.41
+  - Mascara NDVI < 0.4 nos ratios espectrais para excluir vegetacao densa (~32% da area preservada = solo exposto)
+  - ASTER usa mascara NDVI derivada do Sentinel-2 (melhor resolucao espacial)
+  - RGB composicoes usam seca mas SEM mascara (para contexto visual)
 - Toggle de layers via checkbox no frontend (enable/disable com tiles dinamicos)
 - Slider de opacidade afeta todas as layers ativas
 - Troca de basemap preserva layers ativas
-- Endpoint `POST /api/layers/{id}/generate` retorna tile URL do GEE
-- Endpoint `GET /api/layers` agora retorna campos `available` e `can_generate`
 - 13 testes automatizados passando
-- Vis params calibrados com percentis reais (p2/p98) da area de estudo
 
 ### Proxima: Fase 3 — ASTER local + processamento avancado
 - Download ASTER L1T para processamento local
@@ -51,31 +53,21 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 senrem3/
 ├── backend/
 │   ├── main.py              # FastAPI app, monta routers + serve frontend
-│   ├── config.py            # Settings: coordenadas, raio, gee_project, etc.
+│   ├── config.py            # Settings: coordenadas, raio, gee_project=c3po-461514
 │   ├── api/
 │   │   ├── config_routes.py # GET /api/config, GET /api/health
 │   │   └── layers.py        # GET /api/layers, POST /api/layers/{id}/generate
 │   ├── services/
-│   │   └── gee.py           # GEEService: tiles via getMapId(), LAYER_CONFIGS
+│   │   └── gee.py           # GEEService: LAYER_CONFIGS, tiles via getMapId()
+│   │                        # Filtros: estacao seca + mascara NDVI<0.4
 │   └── models/              # (vazio, para Fase 5: prospectivity.py)
 ├── frontend/
 │   ├── index.html           # SPA: header, sidebar, mapa, status bar
 │   ├── style.css            # Tema escuro (#1a1a2e, #16213e, #e94560)
 │   └── app.js               # MapLibre GL JS, enableLayer/disableLayer, basemaps
-├── tests/
-│   ├── test_config.py       # Testa /api/config e /api/health (2 testes)
-│   ├── test_gee.py          # Testa GEEService init, bbox, tile URL (3 testes)
-│   ├── test_gee_aster.py    # Testa layers ASTER carbonatos/silica (2 testes)
-│   ├── test_layer_tiles.py  # Testa POST /api/layers/{id}/generate (3 testes)
-│   └── test_layers.py       # Testa GET /api/layers (3 testes)
-├── data/
-│   ├── rasters/             # Cache de imagens processadas (gitignored)
-│   ├── vectors/             # Shapefiles, GeoJSON (gitignored)
-│   └── tiles/               # Tiles raster (gitignored)
-├── docs/plans/
-│   ├── 2026-03-15-senrem3-architecture-design.md  # Design completo do sistema
-│   ├── 2026-03-15-fase1-base.md                   # Plano Fase 1 (executado)
-│   └── 2026-03-15-fase2-gee.md                    # Plano Fase 2 (executado)
+├── tests/                   # 13 testes (pytest + FastAPI TestClient)
+├── data/                    # rasters/, vectors/, tiles/ (gitignored)
+├── docs/plans/              # Design + planos de cada fase
 ├── requirements.txt
 └── .gitignore
 ```
@@ -112,8 +104,9 @@ python -m pytest tests/ -v      # 13 testes
 - Tema visual escuro (#1a1a2e, #16213e, #e94560)
 - `app.mount("/", StaticFiles(...))` DEVE ser a ultima linha apos todos os `include_router`
 - Commits em portugues, formato convencional (feat:, chore:, fix:)
-- Tiles GEE servidos via `ee.Image.getMapId()` — sem download local na Fase 2
-- Vis params dos ratios DEVEM ser calibrados com percentis reais da area (usar reduceRegion com Reducer.percentile)
+- Tiles GEE servidos via `ee.Image.getMapId()` — sem download local
+- Vis params dos ratios DEVEM ser calibrados com percentis reais (p2/p98) via GEE reduceRegion
+- Ratios espectrais DEVEM usar estacao seca + mascara NDVI<0.4 para minimizar vegetacao
 
 ## Decisoes de design
 
@@ -121,6 +114,8 @@ python -m pytest tests/ -v      # 13 testes
 - **Por que MapLibre GL JS?** Open-source, performatico para tiles raster, suporte a layers
 - **Por que GEE + download local?** GEE para exploracao rapida, download para analises detalhadas (ASTER/Crosta)
 - **Tiles direto do GEE:** `getMapId()` retorna URL template `{z}/{x}/{y}` compativel com MapLibre raster source
+- **Estacao seca (jun-set):** Cerrado tem forte sazonalidade, NDVI cai ~35% na seca expondo mais solo
+- **Mascara NDVI < 0.4:** Preserva ~32% da area (solo exposto + veg rala), melhora FeOx em +12%
 - **Modelo de prospectividade:** Knowledge-driven (fuzzy/weighted overlay) como base, data-driven (RF/SVM) como complemento
 - **Pesos do modelo:** Ajustaveis pelo usuario no frontend (sao hipoteses geologicas, nao constantes)
 
