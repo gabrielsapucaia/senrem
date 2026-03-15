@@ -10,7 +10,7 @@ LAYER_CONFIGS = {
         "vis": {"min": 0, "max": 3000},
         "use_dry_season": True,
         "mask_vegetation": False,
-        "description": "Sentinel-2 RGB verdadeira (seca jun-set, <20% nuvens)",
+        "description": "Sentinel-2 RGB verdadeira (ago-out 2017-2024, <20% nuvens)",
     },
     "rgb-false": {
         "name": "RGB Falsa-cor",
@@ -19,27 +19,27 @@ LAYER_CONFIGS = {
         "vis": {"min": 0, "max": 5000},
         "use_dry_season": True,
         "mask_vegetation": False,
-        "description": "Sentinel-2 SWIR/NIR/Red — destaque de solo exposto (seca)",
+        "description": "Sentinel-2 SWIR/NIR/Red — destaque de solo exposto (ago-out 2017-2024)",
     },
     "iron-oxide": {
         "name": "Oxidos de Ferro",
         "collection": "COPERNICUS/S2_SR_HARMONIZED",
         "bands": None,
-        "vis": {"min": 1.5, "max": 2.9, "palette": ["blue", "white", "red"]},
+        "vis": {"min": 1.65, "max": 2.45, "palette": ["blue", "white", "red"]},
         "ratio": "B4/B2",
         "use_dry_season": True,
         "mask_vegetation": True,
-        "description": "Ratio B4/B2 — oxidos de ferro (seca, sem vegetacao densa)",
+        "description": "Ratio B4/B2 — oxidos de ferro (ago-out 2017-2024, NDVI<0.4)",
     },
     "clay": {
         "name": "Argilas / Sericita",
         "collection": "COPERNICUS/S2_SR_HARMONIZED",
         "bands": None,
-        "vis": {"min": 1.2, "max": 1.6, "palette": ["blue", "white", "red"]},
+        "vis": {"min": 1.26, "max": 1.60, "palette": ["blue", "white", "red"]},
         "ratio": "B11/B12",
         "use_dry_season": True,
         "mask_vegetation": True,
-        "description": "Ratio SWIR1/SWIR2 — argilas e sericita (seca, sem vegetacao densa)",
+        "description": "Ratio SWIR1/SWIR2 — argilas e sericita (ago-out 2017-2024, NDVI<0.4)",
     },
     "dem": {
         "name": "DEM / Hillshade",
@@ -92,8 +92,14 @@ class GEEService:
         )
         if dry_season_only:
             col = (
-                col.filterDate("2022-01-01", "2024-12-31")
-                .filter(ee.Filter.calendarRange(6, 9, "month"))
+                col.filterDate("2017-01-01", "2024-12-31")
+                .filter(ee.Filter.calendarRange(8, 10, "month"))
+                .filter(
+                    ee.Filter.Or(
+                        ee.Filter.calendarRange(2017, 2017, "year"),
+                        ee.Filter.calendarRange(2019, 2024, "year"),
+                    )
+                )
             )
         else:
             col = col.filterDate("2024-01-01", "2024-12-31")
