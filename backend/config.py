@@ -13,5 +13,8 @@ class Settings(BaseSettings):
     study_area_radius_km: float = 25.0
     study_area_name: str = "Natividade-Almas Greenstone Belt"
 
+    earthdata_username: str = ""
+    earthdata_password: str = ""
+
 
 settings = Settings()
