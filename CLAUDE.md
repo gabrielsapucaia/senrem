@@ -38,10 +38,20 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 - Troca de basemap preserva layers ativas
 - 13 testes automatizados passando
 
-### Proxima: Fase 3 — ASTER local + processamento avancado
-- Download ASTER L1T para processamento local
-- Metodo Crosta (PCA dirigida) para mapeamento de alteracao hidrotermal
-- PCA para destaque de anomalias espectrais
+### Proxima: Fase 3 — ASTER local + processamento avancado (DESIGN APROVADO, PLANO ESCRITO)
+- Design: `docs/plans/2026-03-15-fase3-aster-design.md`
+- Plano: `docs/plans/2026-03-15-fase3-implementation.md` (7 tasks)
+- Download ASTER L2 (AST_07XT VNIR+SWIR, AST_08 TIR) via AppEEARS API (NASA Earthdata)
+- SWIR (B4-B9) so existe 2000-2008 (detector falhou em abril 2008)
+- TIR (B10-B14) existe 2000-2024
+- Composite mediana de todo historico por banda
+- Metodo Crosta (PCA dirigida): FeOx (VNIR B1-B3), OH/Sericita (SWIR B4-B7)
+- Ratios Ninomiya: AlOH B7/(B6*B8), MgOH B7/(B6+B9), Ferrous B5/B4
+- PCA exploratoria TIR (B10-B14): CP2/CP3 para silicificacao
+- Tiles servidos via rio-tiler (COGs locais)
+- 6 novas layers: crosta-feox, crosta-oh, ninomiya-aloh, ninomiya-mgoh, ninomiya-ferrous, pca-tir
+- Novos servicos: aster.py, processing.py, tiles.py, pipeline.py
+- Requer conta NASA Earthdata (gratuita): earthdata_username/password em config.py
 
 ### Fases futuras
 - **Fase 4:** Dados CPRM (geologia, ocorrencias, geofisica via WMS/WFS e PGBC)
@@ -125,3 +135,5 @@ python -m pytest tests/ -v      # 13 testes
 - Design completo: `docs/plans/2026-03-15-senrem3-architecture-design.md`
 - Plano Fase 1: `docs/plans/2026-03-15-fase1-base.md`
 - Plano Fase 2: `docs/plans/2026-03-15-fase2-gee.md`
+- Design Fase 3: `docs/plans/2026-03-15-fase3-aster-design.md`
+- Plano Fase 3: `docs/plans/2026-03-15-fase3-implementation.md`
