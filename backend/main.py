@@ -1,6 +1,7 @@
 import os
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
@@ -25,14 +26,30 @@ def startup_preload():
 
 
 @app.get("/api/tiles/{layer_id}/{z}/{x}/{y}.png")
-def get_tile(layer_id: str, z: int, x: int, y: int):
+def get_tile(
+    layer_id: str, z: int, x: int, y: int,
+    colormap: Optional[str] = Query(None),
+    vmin: Optional[float] = Query(None),
+    vmax: Optional[float] = Query(None),
+):
     try:
-        tile_bytes = tile_service.get_tile(layer_id, z, x, y)
+        tile_bytes = tile_service.get_tile(
+            layer_id, z, x, y,
+            colormap=colormap, vmin=vmin, vmax=vmax,
+        )
         return Response(content=tile_bytes, media_type="image/png")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tiles/{layer_id}/stats")
+def get_tile_stats(layer_id: str):
+    if layer_id not in tile_service._stats:
+        raise HTTPException(status_code=404, detail=f"Stats nao encontradas para '{layer_id}'")
+    p2, p98 = tile_service._stats[layer_id]
+    return {"p2": p2, "p98": p98}
 
 
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
