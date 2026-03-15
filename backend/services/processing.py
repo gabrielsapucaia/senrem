@@ -124,6 +124,36 @@ class ProcessingService:
         """
         return self.compute_ratio(b5, b4)
 
+    def build_composite(
+        self,
+        scene_paths: List[str],
+        output_path: str,
+        bands: List[int],
+    ) -> None:
+        """Gera composite mediana a partir de multiplas cenas.
+
+        Args:
+            scene_paths: Lista de caminhos para cenas GeoTIFF.
+            output_path: Caminho do arquivo de saida.
+            bands: Lista de indices de banda (1-based) para incluir.
+        """
+        ref = rasterio.open(scene_paths[0])
+        height, width = ref.height, ref.width
+        transform = ref.transform
+        crs = ref.crs
+        ref.close()
+
+        all_data = []
+        for path in scene_paths:
+            with rasterio.open(path) as src:
+                scene_bands = src.read(bands)
+                all_data.append(scene_bands)
+
+        stacked = np.stack(all_data, axis=0)
+        median = np.median(stacked, axis=0).astype(np.float32)
+
+        self.save_as_cog(median, output_path, transform=transform, crs=crs)
+
     def save_as_cog(
         self,
         data: np.ndarray,
