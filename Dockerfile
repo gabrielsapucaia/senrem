@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ backend/
 COPY frontend/ frontend/
 
-# Create data directories
+# Create data directories (volume mounts here in production)
 RUN mkdir -p data/rasters/processed data/tiles data/vectors
 
 EXPOSE 8000

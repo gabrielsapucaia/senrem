@@ -8,3 +8,4 @@ data/
 docs/
 tests/
 *.egg-info/
+gee-service-account-key.json
