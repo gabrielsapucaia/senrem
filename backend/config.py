@@ -2,6 +2,8 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    model_config = {"env_file": ".env"}
+
     app_name: str = "SENREM3"
     host: str = "0.0.0.0"
     port: int = 8000
