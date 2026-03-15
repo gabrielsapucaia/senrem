@@ -57,7 +57,7 @@ async function init() {
 
     setupBasemapSwitcher();
     setupOpacitySlider();
-    setupLayersList();
+    await setupLayersList();
 }
 
 function addStudyAreaCircle(config) {
@@ -138,28 +138,15 @@ function setupBasemapSwitcher() {
     layersPanel.insertBefore(container, layersPanel.querySelector("#layers-list"));
 }
 
-function setupLayersList() {
+async function setupLayersList() {
     const list = document.getElementById("layers-list");
-    const layers = [
-        { id: "rgb-true", name: "RGB Verdadeira", available: false },
-        { id: "rgb-false", name: "RGB Falsa-cor", available: false },
-        { id: "iron-oxide", name: "Oxidos de Ferro", available: false },
-        { id: "clay", name: "Argilas / Sericita", available: false },
-        { id: "carbonate", name: "Carbonatos", available: false },
-        { id: "silica", name: "Silica", available: false },
-        { id: "dem", name: "DEM / Hillshade", available: false },
-        { id: "lineaments", name: "Lineamentos", available: false },
-        { id: "geology", name: "Geologia (CPRM)", available: false },
-        { id: "magnetic", name: "Magnetico", available: false },
-        { id: "gamma", name: "Gamaespectrometrico", available: false },
-        { id: "targets", name: "Alvos", available: false },
-    ];
+    const layers = await fetch("/api/layers").then(r => r.json());
 
     layers.forEach(layer => {
         const item = document.createElement("div");
         item.className = "layer-item";
         item.innerHTML = `
-            <input type="checkbox" id="layer-${layer.id}" disabled>
+            <input type="checkbox" id="layer-${layer.id}" ${layer.available ? "" : "disabled"}>
             <label for="layer-${layer.id}">${layer.name}</label>
         `;
         list.appendChild(item);
