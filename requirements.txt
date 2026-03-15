@@ -1,0 +1,14 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+rasterio==1.4.3
+geopandas==1.0.1
+shapely==2.0.6
+pyproj==3.6.1
+numpy==2.0.2
+scikit-learn==1.5.2
+earthengine-api==1.4.2
+requests==2.32.3
+httpx==0.28.1
+rio-tiler==7.5.1
+pydantic==2.10.4
+pydantic-settings==2.7.1
