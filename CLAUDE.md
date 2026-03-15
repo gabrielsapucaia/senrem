@@ -79,9 +79,20 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 - PCA no GEE: `ee.Array.eigen()` + `matrixMultiply` + selecao Crosta automatica via `getInfo()` dos eigenvectors
 - ASTER GED (`NASA/ASTER_GED/AG100_003`) para PCA TIR em vez de download AST_05
 - Vis params GEE: paleta viridis hex + percentil stretch p2/p98 via `reduceRegion`
-- Scale PCA: 60m para VNIR/SWIR, 100m para TIR (evitar memory limit GEE)
-- **Resultado:** layers locais superiores (cobertura continua, sem lacunas), GEE fragmentado (nodata/nuvens)
+- **Pipeline GEE melhorado** (replica o pipeline local):
+  1. Filtro sazonal ago-out (`calendarRange(8, 10, 'month')`) — estacao seca, consistente com local
+  2. Normalizacao por cena (`.map()` com `mean/std` + `.toFloat()`) antes do `median()` — remove artefatos inter-cena
+  3. Mascara NDVI<0.4 (Sentinel-2 dry season)
+  4. Processamento (PCA/Crosta/ratios)
+  5. Filtro mediana 3x3 (`focalMedian(1.5, 'square', 'pixels')`) — suaviza artefatos residuais
+  6. `bestEffort=True` no `reduceRegion` para PCA — auto-ajusta escala se exceder memoria
+- Scale PCA: 30m VNIR (FeOx), 60m SWIR (OH), 100m TIR — `bestEffort=True` permite tentar nativa
+- Normalizacao: `normalize=True` para PCA/Crosta, `normalize=False` para ratios Ninomiya (auto-normalizantes)
+- Tipo homogeneo: `.toFloat()` obrigatorio apos normalizacao (GEE rejeita `Float<range>` heterogeneo no `median()`)
+- **Resultado:** layers GEE mais suaves e coerentes, mas locais continuam superiores (cobertura continua vs gaps GEE)
+- Gaps de cobertura sao inerentes ao catalogo ASTER L1T no GEE (menos cenas validas, especialmente na seca)
 - Cache persistente de tile URLs GEE em `data/gee_tile_cache.json`
+- Cache salvo **incrementalmente** (apos cada layer) — resiste a restart do uvicorn
 - Pre-load automatico na startup: COGs locais instantaneo + GEE em background thread
 - Botao "Atualizar Layers" no frontend para renovar cache GEE sob demanda
 - Endpoint: POST `/api/layers/refresh` — limpa cache GEE e regenera em background
