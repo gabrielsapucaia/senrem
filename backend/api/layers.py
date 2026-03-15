@@ -212,12 +212,12 @@ def _start_gee_preload():
                 tile_data = gee_service.get_layer_tiles(layer_id)
                 _generated_tiles[layer_id] = tile_data
                 _preload_status["done"] += 1
+                _save_cache()
                 print(f"  GEE pre-loaded: {layer_id} ({_preload_status['done']}/{_preload_status['total']})")
             except Exception as e:
                 _preload_status["done"] += 1
                 print(f"  AVISO: Falha ao pre-carregar {layer_id}: {e}")
         _preload_status["running"] = False
-        _save_cache()
         print("Pre-carregamento completo!")
 
     thread = threading.Thread(target=_preload_gee, daemon=True)

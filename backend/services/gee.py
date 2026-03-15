@@ -160,27 +160,73 @@ class GEEService:
             .clip(self._region)
         )
 
-    def _get_aster_l1t_masked(self):
-        """ASTER L1T 2000-2008 (SWIR funcional) com mascara NDVI Sentinel-2."""
-        l1t = (
+    def _get_aster_l1t_improved(self, bands, normalize=True):
+        """ASTER L1T melhorado: sazonal ago-out + normalizacao por cena + NDVI mask.
+
+        Replica o pipeline local: filtra estacao seca, normaliza cada cena
+        (mean/std) antes do composite mediana, aplica mascara NDVI<0.4.
+
+        Args:
+            bands: Lista de nomes de bandas ASTER (ex: ["B01", "B02", "B3N"]).
+            normalize: Se True, normaliza cada cena para mean=0/std=1.
+                       Essencial para PCA. Desnecessario para ratios.
+        """
+        col = (
             ee.ImageCollection("ASTER/AST_L1T_003")
             .filterBounds(self._region)
             .filterDate("2000-01-01", "2008-04-01")
-            .median()
-            .clip(self._region)
+            .filter(ee.Filter.calendarRange(8, 10, "month"))
+            .select(bands)
         )
+
+        if normalize:
+            region = self._region
+
+            def norm_scene(image):
+                stats = image.reduceRegion(
+                    reducer=ee.Reducer.mean().combine(
+                        ee.Reducer.stdDev(), sharedInputs=True
+                    ),
+                    geometry=region,
+                    scale=90,
+                    maxPixels=1e9,
+                    bestEffort=True,
+                )
+                normalized = image
+                for b in bands:
+                    mean = ee.Number(stats.get(b + "_mean"))
+                    std = ee.Number(stats.get(b + "_stdDev")).max(0.0001)
+                    normalized = normalized.addBands(
+                        image.select(b).subtract(mean).divide(std).toFloat(),
+                        overwrite=True,
+                    )
+                return normalized
+
+            col = col.map(norm_scene)
+
+        median = col.median().clip(self._region)
         s2 = self._get_sentinel2_median(dry_season_only=True)
         mask = self._get_ndvi_mask(s2)
-        return l1t.updateMask(mask)
+        return median.updateMask(mask)
+
+    def _smooth(self, image):
+        """Filtro mediana 3x3 para suavizar artefatos residuais."""
+        return image.focalMedian(1.5, "square", "pixels")
 
     def _pca_gee(self, image, bands, scale=30):
-        """PCA via eigendecomposicao no GEE. Retorna (pca_array_image, eigenvectors)."""
+        """PCA via eigendecomposicao no GEE. Retorna (pca_array_image, eigenvectors).
+
+        Usa bestEffort=True para auto-ajustar escala se exceder memoria.
+        A projecao (matrixMultiply) roda pixel-a-pixel na resolucao nativa,
+        independente da escala usada para estatisticas.
+        """
         selected = image.select(bands)
         mean_dict = selected.reduceRegion(
             reducer=ee.Reducer.mean(),
             geometry=self._region,
             scale=scale,
             maxPixels=1e9,
+            bestEffort=True,
         )
         means = ee.Image.constant([mean_dict.get(b) for b in bands])
         centered = selected.subtract(means)
@@ -190,11 +236,11 @@ class GEEService:
             geometry=self._region,
             scale=scale,
             maxPixels=1e9,
+            bestEffort=True,
         )
         covar_array = ee.Array(covar.get("array"))
         eigens = covar_array.eigen()
         eigen_vectors = eigens.slice(1, 1)
-        # Projetar: (NxN) @ (Nx1) = (Nx1) por pixel
         pca_image = ee.Image(eigen_vectors).matrixMultiply(arrays.toArray(1))
         return pca_image, eigen_vectors
 
@@ -224,7 +270,16 @@ class GEEService:
         return pc
 
     def _build_gee_aster(self, layer_id):
-        """Constroi imagem ASTER processada via GEE para comparacao."""
+        """Constroi imagem ASTER processada via GEE.
+
+        Pipeline melhorado (equivalente ao local):
+        1. Filtro sazonal ago-out (estacao seca)
+        2. Normalizacao por cena (mean/std) antes do composite
+        3. Mediana das cenas normalizadas
+        4. Mascara NDVI<0.4 (Sentinel-2)
+        5. Processamento (PCA/Crosta/ratios)
+        6. Filtro mediana 3x3 (suavizacao)
+        """
         if layer_id == "gee-pca-tir":
             ged = ee.Image("NASA/ASTER_GED/AG100_003").clip(self._region)
             bands = [
@@ -235,30 +290,47 @@ class GEEService:
             mask = self._get_ndvi_mask(s2)
             ged = ged.select(bands).updateMask(mask)
             pca_image, _ = self._pca_gee(ged, bands, scale=100)
-            return self._extract_pc(pca_image, 1)  # PC2 (PC1 = albedo)
+            pc2 = self._extract_pc(pca_image, 1)
+            return self._smooth(pc2)
 
-        l1t = self._get_aster_l1t_masked()
+        # Ratios Ninomiya: normalize=False (ratio e auto-normalizante)
+        if layer_id.startswith("gee-ninomiya"):
+            ninomiya_bands = {
+                "gee-ninomiya-aloh": ["B04", "B05", "B06", "B07", "B08"],
+                "gee-ninomiya-mgoh": ["B04", "B05", "B06", "B07", "B09"],
+                "gee-ninomiya-ferrous": ["B04", "B05"],
+            }
+            bands = ninomiya_bands[layer_id]
+            l1t = self._get_aster_l1t_improved(bands, normalize=False)
 
-        if layer_id == "gee-ninomiya-aloh":
-            return l1t.select("B07").divide(
-                l1t.select("B06").multiply(l1t.select("B08"))
+            if layer_id == "gee-ninomiya-aloh":
+                result = l1t.select("B07").divide(
+                    l1t.select("B06").multiply(l1t.select("B08"))
+                )
+            elif layer_id == "gee-ninomiya-mgoh":
+                result = l1t.select("B07").divide(
+                    l1t.select("B06").add(l1t.select("B09"))
+                )
+            else:
+                result = l1t.select("B05").divide(l1t.select("B04"))
+            return self._smooth(result)
+
+        # Crosta (PCA dirigida): normalize=True (essencial para PCA)
+        if layer_id == "gee-crosta-feox":
+            bands = ["B01", "B02", "B3N"]
+            l1t = self._get_aster_l1t_improved(bands, normalize=True)
+            result = self._build_crosta_gee(
+                l1t, bands, target_band=2, contrast_band=0, scale=30,
             )
-        elif layer_id == "gee-ninomiya-mgoh":
-            return l1t.select("B07").divide(
-                l1t.select("B06").add(l1t.select("B09"))
-            )
-        elif layer_id == "gee-ninomiya-ferrous":
-            return l1t.select("B05").divide(l1t.select("B04"))
-        elif layer_id == "gee-crosta-feox":
-            return self._build_crosta_gee(
-                l1t, ["B01", "B02", "B3N"],
-                target_band=2, contrast_band=0, scale=60,
-            )
+            return self._smooth(result)
+
         elif layer_id == "gee-crosta-oh":
-            return self._build_crosta_gee(
-                l1t, ["B04", "B05", "B06", "B07"],
-                target_band=2, contrast_band=1, scale=60,
+            bands = ["B04", "B05", "B06", "B07"]
+            l1t = self._get_aster_l1t_improved(bands, normalize=True)
+            result = self._build_crosta_gee(
+                l1t, bands, target_band=2, contrast_band=1, scale=60,
             )
+            return self._smooth(result)
 
     def _build_image(self, layer_id):
         config = LAYER_CONFIGS[layer_id]
