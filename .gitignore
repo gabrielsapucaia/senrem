@@ -4,8 +4,10 @@ __pycache__/
 data/rasters/*
 data/tiles/*
 data/vectors/*
+data/aster/
 !data/rasters/.gitkeep
 !data/tiles/.gitkeep
 !data/vectors/.gitkeep
 .env
 *.egg-info/
+.DS_Store
