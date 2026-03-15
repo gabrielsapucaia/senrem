@@ -16,6 +16,7 @@ def test_list_layers():
     assert "name" in layer
     assert "available" in layer
     assert "category" in layer
+    assert "can_generate" in layer
 
 
 def test_layers_have_categories():
@@ -24,3 +25,10 @@ def test_layers_have_categories():
     categories = {l["category"] for l in data}
     assert "spectral" in categories
     assert "terrain" in categories
+
+
+def test_gee_layers_can_generate():
+    response = client.get("/api/layers")
+    data = response.json()
+    rgb = next(l for l in data if l["id"] == "rgb-true")
+    assert rgb["can_generate"] is True
