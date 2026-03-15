@@ -9,6 +9,7 @@ import rasterio
 from rasterio.crs import CRS
 from rasterio.transform import from_bounds
 from rasterio.warp import calculate_default_transform, reproject, Resampling
+from scipy.ndimage import median_filter
 
 from backend.services.aster import AsterService, BAND_SUFFIXES
 from backend.services.processing import ProcessingService
@@ -135,6 +136,20 @@ class AsterPipeline:
 
         stacked = np.stack(band_arrays, axis=0)
         stacked[stacked <= 0] = np.nan
+
+        # Normalizar cada cena para mesma media/std antes da mediana
+        # Remove artefatos de borda de cena (diferentes subsets = valores diferentes)
+        global_mean = np.nanmean(stacked)
+        global_std = np.nanstd(stacked)
+        for i in range(stacked.shape[0]):
+            scene = stacked[i]
+            valid = np.isfinite(scene)
+            if valid.any():
+                s_mean = np.nanmean(scene)
+                s_std = np.nanstd(scene)
+                if s_std > 0:
+                    stacked[i] = (scene - s_mean) / s_std * global_std + global_mean
+
         return np.nanmedian(stacked, axis=0).astype(np.float32)
 
     def download_and_composite(self, product: str) -> str:
@@ -197,6 +212,21 @@ class AsterPipeline:
         output_path = self.get_processed_path(layer_id)
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
+        # Mascara de vegetacao NDVI < 0.4 (AST_07XT: B02=Red, B03N=NIR)
+        if product == "AST_07XT":
+            red = data[1].astype(np.float32)   # B02
+            nir = data[2].astype(np.float32)   # B03N
+            ndvi = np.where(
+                (nir + red) > 0,
+                (nir - red) / (nir + red),
+                np.nan,
+            )
+            veg_mask = ndvi >= 0.4
+            for i in range(data.shape[0]):
+                data[i][veg_mask] = np.nan
+            pct_masked = np.sum(veg_mask) / veg_mask.size * 100
+            print(f"  Mascara NDVI<0.4: {pct_masked:.1f}% vegetacao mascarada")
+
         if layer_id == "crosta-feox":
             vnir = data[:3]  # B1, B2, B3
             components, loadings, _ = self.processing_service.run_pca(
@@ -233,6 +263,13 @@ class AsterPipeline:
             result = components[1]  # CP2 (CP1 = albedo)
         else:
             raise ValueError(f"Layer desconhecida: {layer_id}")
+
+        # Suavizar resultado final para remover artefatos residuais
+        if result.ndim == 2:
+            mask = np.isfinite(result)
+            if mask.any():
+                smoothed = median_filter(np.nan_to_num(result), size=3)
+                result[mask] = smoothed[mask]
 
         self.processing_service.save_as_cog(
             result, output_path, transform=transform, crs=crs

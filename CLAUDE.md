@@ -57,11 +57,14 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 - TIR (B10-B14) existe 2000-2024
 - AST_07XT v004 vem em GeoTIFs separados por banda (nao HDF), UTM, int16
 - AST_08 trocado por AST_05 (emissividade) para PCA TIR
-- Composite com reprojecao: todas as bandas reprojetadas para grid comum EPSG:4326 ~30m (1699x1664 pixels)
-- 49 cenas AST_07XT (2000-2008, ~4GB) + 223 cenas AST_05 (2000-2024) baixadas
-- Suffixes reais: AST_07XT=SRF_VNIR_B01..SRF_SWIR_B09, AST_05=SRE_TIR_B10..SRE_TIR_B14
-- Pipeline testado end-to-end: 6 COGs processadas em data/rasters/processed/
-- 34 testes automatizados passando
+- Composite com reprojecao para grid EPSG:4326 ~30m (1699x1664) + normalizacao por cena (media/std)
+- Mascara NDVI<0.4 nas layers AST_07XT (52.6% vegetacao mascarada, consistente com Fase 2)
+- Filtro mediana 3x3 no resultado final para suavizar artefatos residuais
+- Tiles com colormap viridis via rio-tiler (rescale p2/p98 por layer)
+- 49 cenas AST_07XT (2000-2008, ~4GB) + 223 cenas AST_05 (2000-2024)
+- Suffixes: AST_07XT=SRF_VNIR_B01..SRF_SWIR_B09, AST_05=SRE_TIR_B10..SRE_TIR_B14
+- Pipeline end-to-end funcionando: 6 COGs em data/rasters/processed/
+- 34 testes passando
 - Design: `docs/plans/2026-03-15-fase3-aster-design.md`
 - Plano: `docs/plans/2026-03-15-fase3-implementation.md` (7 tasks)
 
