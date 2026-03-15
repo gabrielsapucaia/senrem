@@ -38,20 +38,24 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 - Troca de basemap preserva layers ativas
 - 13 testes automatizados passando
 
-### Proxima: Fase 3 — ASTER local + processamento avancado (DESIGN APROVADO, PLANO ESCRITO)
+### Fase 3 — ASTER Local + Processamento Avancado (IMPLEMENTADA)
+- Servico ASTER (`backend/services/aster.py`) — download via AppEEARS API (NASA Earthdata)
+- Servico de processamento (`backend/services/processing.py`) — PCA, Crosta (PCA dirigida), ratios Ninomiya
+- Servico de tiles (`backend/services/tiles.py`) — serve tiles locais via rio-tiler
+- Pipeline orquestrador (`backend/services/pipeline.py`) — download -> composite -> processamento -> COG
+- 6 novas layers ASTER integradas no layers.py:
+  - Crosta FeOx (PCA dirigida VNIR B1-B3, 2000-2008)
+  - Crosta OH/Sericita (PCA dirigida SWIR B4-B7, 2000-2008)
+  - Ninomiya AlOH B7/(B6*B8) (2000-2008)
+  - Ninomiya MgOH B7/(B6+B9) (2000-2008)
+  - Ninomiya Fe2+ B5/B4 (2000-2008)
+  - PCA TIR B10-B14 CP2 (2000-2024)
+- Endpoint de tiles: GET /api/tiles/{layer_id}/{z}/{x}/{y}.png
+- Requer conta NASA Earthdata (gratuita): earthdata_username/password em config.py
+- ASTER SWIR (B4-B9) so existe 2000-2008 (falha do detector)
+- TIR (B10-B14) existe 2000-2024
 - Design: `docs/plans/2026-03-15-fase3-aster-design.md`
 - Plano: `docs/plans/2026-03-15-fase3-implementation.md` (7 tasks)
-- Download ASTER L2 (AST_07XT VNIR+SWIR, AST_08 TIR) via AppEEARS API (NASA Earthdata)
-- SWIR (B4-B9) so existe 2000-2008 (detector falhou em abril 2008)
-- TIR (B10-B14) existe 2000-2024
-- Composite mediana de todo historico por banda
-- Metodo Crosta (PCA dirigida): FeOx (VNIR B1-B3), OH/Sericita (SWIR B4-B7)
-- Ratios Ninomiya: AlOH B7/(B6*B8), MgOH B7/(B6+B9), Ferrous B5/B4
-- PCA exploratoria TIR (B10-B14): CP2/CP3 para silicificacao
-- Tiles servidos via rio-tiler (COGs locais)
-- 6 novas layers: crosta-feox, crosta-oh, ninomiya-aloh, ninomiya-mgoh, ninomiya-ferrous, pca-tir
-- Novos servicos: aster.py, processing.py, tiles.py, pipeline.py
-- Requer conta NASA Earthdata (gratuita): earthdata_username/password em config.py
 
 ### Fases futuras
 - **Fase 4:** Dados CPRM (geologia, ocorrencias, geofisica via WMS/WFS e PGBC)
@@ -69,8 +73,12 @@ senrem3/
 │   │   ├── config_routes.py # GET /api/config, GET /api/health
 │   │   └── layers.py        # GET /api/layers, POST /api/layers/{id}/generate
 │   ├── services/
-│   │   └── gee.py           # GEEService: LAYER_CONFIGS, tiles via getMapId()
-│   │                        # Filtros: estacao seca + mascara NDVI<0.4
+│   │   ├── gee.py           # GEEService: LAYER_CONFIGS, tiles via getMapId()
+│   │   │                    # Filtros: estacao seca + mascara NDVI<0.4
+│   │   ├── aster.py         # AsterService: download via AppEEARS API
+│   │   ├── processing.py    # ProcessingService: PCA, Crosta, ratios Ninomiya
+│   │   ├── tiles.py         # TileService: serve tiles locais via rio-tiler
+│   │   └── pipeline.py      # AsterPipeline: orquestra download->processamento->COG
 │   └── models/              # (vazio, para Fase 5: prospectivity.py)
 ├── frontend/
 │   ├── index.html           # SPA: header, sidebar, mapa, status bar
@@ -103,8 +111,9 @@ python -m pytest tests/ -v      # 13 testes
 |--------|------|-----------|
 | GET | `/api/health` | Health check |
 | GET | `/api/config` | Retorna centro, raio, nome da area de estudo |
-| GET | `/api/layers` | Lista 12 layers com campos available/can_generate |
-| POST | `/api/layers/{id}/generate` | Gera tiles GEE e retorna tile_url |
+| GET | `/api/layers` | Lista 19 layers com campos available/can_generate |
+| POST | `/api/layers/{id}/generate` | Gera tiles GEE/locais e retorna tile_url |
+| GET | `/api/tiles/{layer_id}/{z}/{x}/{y}.png` | Serve tiles de COGs locais (ASTER) |
 
 ## Convencoes
 

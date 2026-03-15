@@ -105,10 +105,21 @@ def generate_layer(layer_id: str):
         config = LOCAL_LAYER_CONFIGS[layer_id]
 
         if not os.path.exists(cog_path):
-            raise HTTPException(
-                status_code=404,
-                detail=f"COG para '{layer_id}' nao encontrado. Execute o download ASTER primeiro.",
+            if not settings.earthdata_username or not settings.earthdata_password:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Credenciais Earthdata nao configuradas. Defina earthdata_username e earthdata_password.",
+                )
+            from backend.services.pipeline import AsterPipeline
+            pipeline = AsterPipeline(
+                data_dir=settings.data_dir,
+                earthdata_username=settings.earthdata_username,
+                earthdata_password=settings.earthdata_password,
+                center_lon=settings.study_area_center_lon,
+                center_lat=settings.study_area_center_lat,
+                radius_km=settings.study_area_radius_km,
             )
+            pipeline.process_layer(layer_id)
 
         # Registrar no tile service e retornar URL
         from backend.main import tile_service
