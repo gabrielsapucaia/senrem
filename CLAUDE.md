@@ -15,7 +15,7 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 - FastAPI servindo API + frontend estatico
 - MapLibre GL JS com mapa interativo, area de estudo (circulo 25km), 3 basemaps (satelite, topo, escuro)
 - Endpoints: `/api/config`, `/api/layers`, `/api/health`
-- Painel lateral com 12 layers, slider de opacidade, secao de pesos
+- Painel lateral com 12 layers, secao de pesos
 
 ### Fase 2 — Google Earth Engine (CONCLUIDA)
 - Servico GEE (`backend/services/gee.py`) integrado com projeto `c3po-461514`
@@ -102,6 +102,24 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 - 19 layers disponiveis ao abrir o browser (cache carregado do disco)
 - 34 testes passando
 
+### Painel de Propriedades de Layer (CONCLUIDO)
+- Segundo sidebar acoplado ao primeiro, aparece ao clicar no nome de uma layer ativa
+- Controles universais (todas as layers, client-side via MapLibre paint properties):
+  - Opacidade individual (0-100%, default 70%)
+  - Brilho min/max (0-1, default 0/1)
+  - Contraste (-1 a +1, default 0)
+  - Saturacao (-1 a +1, default 0)
+- Controles extras (layers locais, source=local, via query params no tile endpoint):
+  - Colormap (viridis, magma, plasma, inferno, turbo, cividis, greys)
+  - Min/Max rescale (sliders com range dinamico baseado em p2/p98)
+- Endpoint de tiles aceita query params: `?colormap=X&vmin=Y&vmax=Z`
+- Novo endpoint: GET `/api/tiles/{layer_id}/stats` retorna `{p2, p98}`
+- Slider de opacidade global removido (substituido por opacidade per-layer)
+- State per-layer preservado ao trocar entre layers no painel
+- 38 testes passando
+- Design: `docs/plans/2026-03-15-layer-properties-design.md`
+- Plano: `docs/plans/2026-03-15-layer-properties-implementation.md`
+
 ### Fases futuras
 - **Fase 4:** Dados CPRM (geologia, ocorrencias, geofisica via WMS/WFS e PGBC)
 - **Fase 5:** Modelo de prospectividade (weighted overlay, painel de pesos ajustaveis)
@@ -141,7 +159,7 @@ senrem3/
 ```bash
 source .venv/bin/activate
 python -m backend.main          # servidor em http://localhost:8000
-python -m pytest tests/ -v      # 34 testes
+python -m pytest tests/ -v      # 38 testes
 ```
 
 ## Configuracao GEE
@@ -159,7 +177,8 @@ python -m pytest tests/ -v      # 34 testes
 | GET | `/api/layers` | Lista 25 layers `{layers, loading, loaded, total}` |
 | POST | `/api/layers/{id}/generate` | Gera tiles GEE/locais e retorna tile_url (usa cache) |
 | POST | `/api/layers/refresh` | Limpa cache GEE e regenera em background |
-| GET | `/api/tiles/{layer_id}/{z}/{x}/{y}.png` | Serve tiles de COGs locais (ASTER) |
+| GET | `/api/tiles/{layer_id}/{z}/{x}/{y}.png` | Serve tiles de COGs locais (aceita ?colormap, ?vmin, ?vmax) |
+| GET | `/api/tiles/{layer_id}/stats` | Retorna percentis p2/p98 da layer para sliders min/max |
 
 ## Convencoes
 
