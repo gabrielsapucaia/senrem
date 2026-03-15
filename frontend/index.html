@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SENREM3</title>
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header id="app-header">
+        <h1>SENREM3</h1>
+        <span class="subtitle">Sensoriamento Remoto para Mineracao</span>
+    </header>
+
+    <div id="app-container">
+        <aside id="sidebar">
+            <section id="layers-panel">
+                <h2>Layers</h2>
+                <div id="layers-list"></div>
+            </section>
+
+            <section id="opacity-panel">
+                <h2>Opacidade</h2>
+                <input type="range" id="opacity-slider" min="0" max="100" value="70">
+                <span id="opacity-value">70%</span>
+            </section>
+
+            <section id="weights-panel">
+                <h2>Pesos</h2>
+                <div id="weights-list"></div>
+                <button id="btn-generate-targets" disabled>Gerar Alvos</button>
+            </section>
+        </aside>
+
+        <main id="map-container">
+            <div id="map"></div>
+        </main>
+    </div>
+
+    <footer id="status-bar">
+        <span id="status-text">Carregando...</span>
+        <span id="cursor-coords"></span>
+    </footer>
+
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <script src="/app.js"></script>
+</body>
+</html>
