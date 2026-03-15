@@ -11,3 +11,4 @@ data/aster/
 .env
 *.egg-info/
 .DS_Store
+*-service-account-key.json

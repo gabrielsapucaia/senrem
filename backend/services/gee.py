@@ -124,7 +124,8 @@ class GEEService:
         if settings.gee_service_account_key:
             key_data = json.loads(settings.gee_service_account_key)
             credentials = ee.ServiceAccountCredentials(
-                key_data["client_email"], key_data=key_data
+                key_data["client_email"],
+                key_data=settings.gee_service_account_key,
             )
             ee.Initialize(credentials=credentials, project=settings.gee_project)
         else:
