@@ -8,30 +8,38 @@ LAYER_CONFIGS = {
         "collection": "COPERNICUS/S2_SR_HARMONIZED",
         "bands": ["B4", "B3", "B2"],
         "vis": {"min": 0, "max": 3000},
-        "description": "Sentinel-2 RGB verdadeira (mediana 2024, <20% nuvens)",
+        "use_dry_season": True,
+        "mask_vegetation": False,
+        "description": "Sentinel-2 RGB verdadeira (seca jun-set, <20% nuvens)",
     },
     "rgb-false": {
         "name": "RGB Falsa-cor",
         "collection": "COPERNICUS/S2_SR_HARMONIZED",
         "bands": ["B11", "B8", "B4"],
         "vis": {"min": 0, "max": 5000},
-        "description": "Sentinel-2 SWIR/NIR/Red — destaque de solo exposto e vegetacao",
+        "use_dry_season": True,
+        "mask_vegetation": False,
+        "description": "Sentinel-2 SWIR/NIR/Red — destaque de solo exposto (seca)",
     },
     "iron-oxide": {
         "name": "Oxidos de Ferro",
         "collection": "COPERNICUS/S2_SR_HARMONIZED",
         "bands": None,
-        "vis": {"min": 1.2, "max": 2.6, "palette": ["blue", "white", "red"]},
+        "vis": {"min": 1.5, "max": 2.9, "palette": ["blue", "white", "red"]},
         "ratio": "B4/B2",
-        "description": "Ratio B4/B2 — indicador de oxidos de ferro (gossan)",
+        "use_dry_season": True,
+        "mask_vegetation": True,
+        "description": "Ratio B4/B2 — oxidos de ferro (seca, sem vegetacao densa)",
     },
     "clay": {
         "name": "Argilas / Sericita",
         "collection": "COPERNICUS/S2_SR_HARMONIZED",
         "bands": None,
-        "vis": {"min": 1.3, "max": 2.3, "palette": ["blue", "white", "red"]},
+        "vis": {"min": 1.2, "max": 1.6, "palette": ["blue", "white", "red"]},
         "ratio": "B11/B12",
-        "description": "Ratio SWIR1/SWIR2 — indicador de argilas e sericita",
+        "use_dry_season": True,
+        "mask_vegetation": True,
+        "description": "Ratio SWIR1/SWIR2 — argilas e sericita (seca, sem vegetacao densa)",
     },
     "dem": {
         "name": "DEM / Hillshade",
@@ -47,7 +55,8 @@ LAYER_CONFIGS = {
         "bands": None,
         "vis": {"min": 0.94, "max": 0.98, "palette": ["blue", "white", "red"]},
         "ratio": "B13/B14",
-        "description": "ASTER B13/B14 — indicador de carbonatos",
+        "mask_vegetation": True,
+        "description": "ASTER B13/B14 — indicador de carbonatos (sem vegetacao densa)",
     },
     "silica": {
         "name": "Silica",
@@ -55,9 +64,12 @@ LAYER_CONFIGS = {
         "bands": None,
         "vis": {"min": 1.37, "max": 1.41, "palette": ["blue", "white", "yellow"]},
         "ratio": "B13/B10",
-        "description": "ASTER B13/B10 — indicador de silica",
+        "mask_vegetation": True,
+        "description": "ASTER B13/B10 — indicador de silica (sem vegetacao densa)",
     },
 }
+
+NDVI_THRESHOLD = 0.4
 
 
 class GEEService:
@@ -72,15 +84,24 @@ class GEEService:
     def get_study_area_bbox(self):
         return self._region.bounds().getInfo()
 
-    def _get_sentinel2_median(self):
-        return (
+    def _get_sentinel2_median(self, dry_season_only=False):
+        col = (
             ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
             .filterBounds(self._region)
-            .filterDate("2024-01-01", "2024-12-31")
             .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
-            .median()
-            .clip(self._region)
         )
+        if dry_season_only:
+            col = (
+                col.filterDate("2022-01-01", "2024-12-31")
+                .filter(ee.Filter.calendarRange(6, 9, "month"))
+            )
+        else:
+            col = col.filterDate("2024-01-01", "2024-12-31")
+        return col.median().clip(self._region)
+
+    def _get_ndvi_mask(self, s2_image):
+        ndvi = s2_image.normalizedDifference(["B8", "B4"])
+        return ndvi.lt(NDVI_THRESHOLD)
 
     def _get_aster_median(self):
         return (
@@ -98,10 +119,20 @@ class GEEService:
             dem = ee.Image("USGS/SRTMGL1_003").clip(self._region)
             return ee.Terrain.hillshade(dem)
 
+        use_dry = config.get("use_dry_season", False)
+        apply_mask = config.get("mask_vegetation", False)
+
         if config["collection"] == "ASTER/AST_L1T_003":
             median = self._get_aster_median()
+            if apply_mask:
+                s2_for_mask = self._get_sentinel2_median(dry_season_only=True)
+                mask = self._get_ndvi_mask(s2_for_mask)
+                median = median.updateMask(mask)
         else:
-            median = self._get_sentinel2_median()
+            median = self._get_sentinel2_median(dry_season_only=use_dry)
+            if apply_mask:
+                mask = self._get_ndvi_mask(median)
+                median = median.updateMask(mask)
 
         if "ratio" in config:
             parts = config["ratio"].split("/")
