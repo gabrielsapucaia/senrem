@@ -18,5 +18,7 @@ class Settings(BaseSettings):
     earthdata_username: str = ""
     earthdata_password: str = ""
 
+    gee_service_account_key: str = ""
+
 
 settings = Settings()

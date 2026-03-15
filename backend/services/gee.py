@@ -1,3 +1,4 @@
+import json
 import os
 
 import ee
@@ -120,7 +121,14 @@ NDVI_THRESHOLD = 0.4
 class GEEService:
     def __init__(self):
         self.ee = ee
-        ee.Initialize(project=settings.gee_project)
+        if settings.gee_service_account_key:
+            key_data = json.loads(settings.gee_service_account_key)
+            credentials = ee.ServiceAccountCredentials(
+                key_data["client_email"], key_data=key_data
+            )
+            ee.Initialize(credentials=credentials, project=settings.gee_project)
+        else:
+            ee.Initialize(project=settings.gee_project)
         self._center = ee.Geometry.Point(
             settings.study_area_center_lon, settings.study_area_center_lat
         )
