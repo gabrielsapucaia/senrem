@@ -32,6 +32,9 @@ let currentBasemap = "satellite";
 let activeLayers = {};
 let layersData = [];
 let pollInterval = null;
+let selectedLayerId = null;
+let layerProps = {};
+let layerStats = {};
 
 async function init() {
     const config = await fetch("/api/config").then(r => r.json());
@@ -59,7 +62,7 @@ async function init() {
     });
 
     setupBasemapSwitcher();
-    setupOpacitySlider();
+    setupPropertiesPanel();
     await refreshLayersList();
 }
 
@@ -219,6 +222,13 @@ async function refreshLayersList() {
         label.htmlFor = `layer-${layer.id}`;
         label.textContent = layer.name;
 
+        label.addEventListener("click", (e) => {
+            if (checkbox.checked) {
+                e.preventDefault();
+                openPropertiesPanel(layer.id);
+            }
+        });
+
         if (layer.available) {
             label.classList.add("layer-ready");
         }
@@ -276,11 +286,15 @@ async function enableLayer(layerId, checkbox) {
             type: "raster",
             source: sourceId,
             paint: {
-                "raster-opacity": parseInt(document.getElementById("opacity-slider").value) / 100
+                "raster-opacity": 0.7
             }
         }, "study-area-fill");
 
         activeLayers[layerId] = sourceId;
+        if (!layerProps[layerId]) {
+            layerProps[layerId] = getDefaultProps();
+        }
+        applyMapLibreProps(layerId);
         updateStatus(`${data.name} carregada`);
     } catch (err) {
         checkbox.checked = false;
@@ -289,6 +303,9 @@ async function enableLayer(layerId, checkbox) {
 }
 
 function disableLayer(layerId) {
+    if (selectedLayerId === layerId) {
+        closePropertiesPanel();
+    }
     const sourceId = `layer-${layerId}`;
     if (map.getLayer(sourceId)) {
         map.removeLayer(sourceId);
@@ -300,15 +317,159 @@ function disableLayer(layerId) {
     updateStatus("Pronto");
 }
 
-function setupOpacitySlider() {
-    const slider = document.getElementById("opacity-slider");
-    const value = document.getElementById("opacity-value");
-    slider.addEventListener("input", () => {
-        const opacity = parseInt(slider.value) / 100;
-        value.textContent = slider.value + "%";
-        Object.values(activeLayers).forEach(sourceId => {
-            if (map.getLayer(sourceId)) {
-                map.setPaintProperty(sourceId, "raster-opacity", opacity);
+function getDefaultProps() {
+    return {
+        opacity: 70,
+        brightnessMin: 0,
+        brightnessMax: 100,
+        contrast: 0,
+        saturation: 0,
+        colormap: "viridis",
+        vmin: null,
+        vmax: null,
+    };
+}
+
+async function openPropertiesPanel(layerId) {
+    if (!activeLayers[layerId]) return;
+
+    selectedLayerId = layerId;
+    if (!layerProps[layerId]) {
+        layerProps[layerId] = getDefaultProps();
+    }
+
+    const layer = layersData.find(l => l.id === layerId);
+    const isLocal = layer && layer.source === "local";
+
+    document.getElementById("props-layer-name").textContent = layer ? layer.name : layerId;
+
+    if (isLocal && !layerStats[layerId]) {
+        try {
+            const resp = await fetch(`/api/tiles/${layerId}/stats`);
+            if (resp.ok) {
+                layerStats[layerId] = await resp.json();
+            }
+        } catch (e) { /* ignore */ }
+    }
+
+    const p = layerProps[layerId];
+    document.getElementById("prop-opacity").value = p.opacity;
+    document.getElementById("prop-opacity-val").textContent = p.opacity + "%";
+    document.getElementById("prop-brightness-min").value = p.brightnessMin;
+    document.getElementById("prop-brightness-min-val").textContent = (p.brightnessMin / 100).toFixed(2);
+    document.getElementById("prop-brightness-max").value = p.brightnessMax;
+    document.getElementById("prop-brightness-max-val").textContent = (p.brightnessMax / 100).toFixed(2);
+    document.getElementById("prop-contrast").value = p.contrast;
+    document.getElementById("prop-contrast-val").textContent = (p.contrast / 100).toFixed(2);
+    document.getElementById("prop-saturation").value = p.saturation;
+    document.getElementById("prop-saturation-val").textContent = (p.saturation / 100).toFixed(2);
+
+    const localControls = document.getElementById("props-local-controls");
+    if (isLocal) {
+        localControls.style.display = "block";
+        document.getElementById("prop-colormap").value = p.colormap;
+
+        const stats = layerStats[layerId];
+        if (stats) {
+            const range = stats.p98 - stats.p2;
+            const sliderMin = Math.floor((stats.p2 - range) * 100);
+            const sliderMax = Math.ceil((stats.p98 + range) * 100);
+            const vminSlider = document.getElementById("prop-vmin");
+            const vmaxSlider = document.getElementById("prop-vmax");
+            vminSlider.min = sliderMin;
+            vminSlider.max = sliderMax;
+            vmaxSlider.min = sliderMin;
+            vmaxSlider.max = sliderMax;
+            vminSlider.value = p.vmin !== null ? Math.round(p.vmin * 100) : Math.round(stats.p2 * 100);
+            vmaxSlider.value = p.vmax !== null ? Math.round(p.vmax * 100) : Math.round(stats.p98 * 100);
+            document.getElementById("prop-vmin-val").textContent = (parseInt(vminSlider.value) / 100).toFixed(2);
+            document.getElementById("prop-vmax-val").textContent = (parseInt(vmaxSlider.value) / 100).toFixed(2);
+        }
+    } else {
+        localControls.style.display = "none";
+    }
+
+    document.getElementById("properties-panel").classList.add("open");
+}
+
+function closePropertiesPanel() {
+    selectedLayerId = null;
+    document.getElementById("properties-panel").classList.remove("open");
+}
+
+function applyMapLibreProps(layerId) {
+    const sourceId = `layer-${layerId}`;
+    const p = layerProps[layerId];
+    if (!p || !map.getLayer(sourceId)) return;
+
+    map.setPaintProperty(sourceId, "raster-opacity", p.opacity / 100);
+    map.setPaintProperty(sourceId, "raster-brightness-min", p.brightnessMin / 100);
+    map.setPaintProperty(sourceId, "raster-brightness-max", p.brightnessMax / 100);
+    map.setPaintProperty(sourceId, "raster-contrast", p.contrast / 100);
+    map.setPaintProperty(sourceId, "raster-saturation", p.saturation / 100);
+}
+
+function rebuildTileUrl(layerId) {
+    const p = layerProps[layerId];
+    if (!p) return;
+    const sourceId = `layer-${layerId}`;
+    const source = map.getSource(sourceId);
+    if (!source) return;
+
+    const stats = layerStats[layerId];
+    const vmin = p.vmin !== null ? p.vmin : (stats ? stats.p2 : null);
+    const vmax = p.vmax !== null ? p.vmax : (stats ? stats.p98 : null);
+
+    let url = `/api/tiles/${layerId}/{z}/{x}/{y}.png?colormap=${p.colormap}`;
+    if (vmin !== null) url += `&vmin=${vmin}`;
+    if (vmax !== null) url += `&vmax=${vmax}`;
+
+    source.setTiles([url]);
+}
+
+function setupPropertiesPanel() {
+    document.getElementById("props-close").addEventListener("click", closePropertiesPanel);
+
+    const sliderConfigs = [
+        { id: "prop-opacity", valId: "prop-opacity-val", prop: "opacity", format: v => v + "%" },
+        { id: "prop-brightness-min", valId: "prop-brightness-min-val", prop: "brightnessMin", format: v => (v / 100).toFixed(2) },
+        { id: "prop-brightness-max", valId: "prop-brightness-max-val", prop: "brightnessMax", format: v => (v / 100).toFixed(2) },
+        { id: "prop-contrast", valId: "prop-contrast-val", prop: "contrast", format: v => (v / 100).toFixed(2) },
+        { id: "prop-saturation", valId: "prop-saturation-val", prop: "saturation", format: v => (v / 100).toFixed(2) },
+    ];
+
+    sliderConfigs.forEach(({ id, valId, prop, format }) => {
+        const slider = document.getElementById(id);
+        slider.addEventListener("input", () => {
+            const val = parseInt(slider.value);
+            document.getElementById(valId).textContent = format(val);
+            if (selectedLayerId && layerProps[selectedLayerId]) {
+                layerProps[selectedLayerId][prop] = val;
+                applyMapLibreProps(selectedLayerId);
+            }
+        });
+    });
+
+    // Colormap
+    const cmSelect = document.getElementById("prop-colormap");
+    cmSelect.addEventListener("change", () => {
+        if (selectedLayerId && layerProps[selectedLayerId]) {
+            layerProps[selectedLayerId].colormap = cmSelect.value;
+            rebuildTileUrl(selectedLayerId);
+        }
+    });
+
+    // Vmin/Vmax
+    ["prop-vmin", "prop-vmax"].forEach(id => {
+        const slider = document.getElementById(id);
+        const valSpan = document.getElementById(id + "-val");
+        const prop = id === "prop-vmin" ? "vmin" : "vmax";
+        slider.addEventListener("input", () => {
+            const val = parseInt(slider.value) / 100;
+            valSpan.textContent = val.toFixed(2);
+            if (selectedLayerId && layerProps[selectedLayerId]) {
+                layerProps[selectedLayerId][prop] = val;
+                rebuildTileUrl(selectedLayerId);
             }
         });
     });

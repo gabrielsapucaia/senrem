@@ -20,17 +20,69 @@
                 <div id="layers-list"></div>
             </section>
 
-            <section id="opacity-panel">
-                <h2>Opacidade</h2>
-                <input type="range" id="opacity-slider" min="0" max="100" value="70">
-                <span id="opacity-value">70%</span>
-            </section>
-
             <section id="weights-panel">
                 <h2>Pesos</h2>
                 <div id="weights-list"></div>
                 <button id="btn-generate-targets" disabled>Gerar Alvos</button>
             </section>
+        </aside>
+
+        <aside id="properties-panel">
+            <div id="props-header">
+                <h2 id="props-layer-name">Layer</h2>
+                <button id="props-close">&times;</button>
+            </div>
+            <div id="props-content">
+                <div class="prop-group">
+                    <label>Opacidade</label>
+                    <input type="range" id="prop-opacity" min="0" max="100" value="70" step="1">
+                    <span class="prop-value" id="prop-opacity-val">70%</span>
+                </div>
+                <div class="prop-group">
+                    <label>Brilho Min</label>
+                    <input type="range" id="prop-brightness-min" min="0" max="100" value="0" step="1">
+                    <span class="prop-value" id="prop-brightness-min-val">0.00</span>
+                </div>
+                <div class="prop-group">
+                    <label>Brilho Max</label>
+                    <input type="range" id="prop-brightness-max" min="0" max="100" value="100" step="1">
+                    <span class="prop-value" id="prop-brightness-max-val">1.00</span>
+                </div>
+                <div class="prop-group">
+                    <label>Contraste</label>
+                    <input type="range" id="prop-contrast" min="-100" max="100" value="0" step="1">
+                    <span class="prop-value" id="prop-contrast-val">0.00</span>
+                </div>
+                <div class="prop-group">
+                    <label>Saturacao</label>
+                    <input type="range" id="prop-saturation" min="-100" max="100" value="0" step="1">
+                    <span class="prop-value" id="prop-saturation-val">0.00</span>
+                </div>
+                <div id="props-local-controls" style="display:none">
+                    <div class="prop-group">
+                        <label>Colormap</label>
+                        <select id="prop-colormap">
+                            <option value="viridis">Viridis</option>
+                            <option value="magma">Magma</option>
+                            <option value="plasma">Plasma</option>
+                            <option value="inferno">Inferno</option>
+                            <option value="turbo">Turbo</option>
+                            <option value="cividis">Cividis</option>
+                            <option value="greys">Greys</option>
+                        </select>
+                    </div>
+                    <div class="prop-group">
+                        <label>Min</label>
+                        <input type="range" id="prop-vmin" min="0" max="1000" value="0" step="1">
+                        <span class="prop-value" id="prop-vmin-val">0.00</span>
+                    </div>
+                    <div class="prop-group">
+                        <label>Max</label>
+                        <input type="range" id="prop-vmax" min="0" max="1000" value="1000" step="1">
+                        <span class="prop-value" id="prop-vmax-val">1.00</span>
+                    </div>
+                </div>
+            </div>
         </aside>
 
         <main id="map-container">
