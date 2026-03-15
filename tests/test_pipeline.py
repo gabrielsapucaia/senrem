@@ -26,7 +26,7 @@ def test_pipeline_get_available_products(tmp_path):
     )
     products = pipeline.get_required_products()
     assert "AST_07XT" in products
-    assert "AST_08" in products
+    assert "AST_05" in products
 
 
 def test_pipeline_layer_to_product_mapping(tmp_path):
@@ -40,5 +40,5 @@ def test_pipeline_layer_to_product_mapping(tmp_path):
     )
     assert pipeline.get_product_for_layer("crosta-feox") == "AST_07XT"
     assert pipeline.get_product_for_layer("crosta-oh") == "AST_07XT"
-    assert pipeline.get_product_for_layer("pca-tir") == "AST_08"
+    assert pipeline.get_product_for_layer("pca-tir") == "AST_05"
     assert pipeline.get_product_for_layer("ninomiya-aloh") == "AST_07XT"

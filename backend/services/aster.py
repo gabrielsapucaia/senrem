@@ -1,12 +1,24 @@
 import math
 import os
-import time
 from typing import Dict, List, Optional
 
 import httpx
 
 
-APPEEARS_BASE = "https://appeears.earthdatacloud.nasa.gov/api"
+CMR_BASE = "https://cmr.earthdata.nasa.gov/search"
+URS_TOKEN_URL = "https://urs.earthdata.nasa.gov/api/users/tokens"
+
+BAND_SUFFIXES = {
+    "AST_07XT": [
+        "SRF_VNIR_B01", "SRF_VNIR_B02", "SRF_VNIR_B03N",
+        "SRF_SWIR_B04", "SRF_SWIR_B05", "SRF_SWIR_B06",
+        "SRF_SWIR_B07", "SRF_SWIR_B08", "SRF_SWIR_B09",
+    ],
+    "AST_05": [
+        "Emissivity_B10", "Emissivity_B11", "Emissivity_B12",
+        "Emissivity_B13", "Emissivity_B14",
+    ],
+}
 
 
 class AsterService:
@@ -34,113 +46,132 @@ class AsterService:
             coords.append([lon, lat])
         return {"type": "Polygon", "coordinates": [coords]}
 
-    def build_task_payload(
-        self,
-        task_name: str,
-        product: str,
-        aoi: Dict,
-        start_date: str,
-        end_date: str,
-    ) -> Dict:
-        layer_map = {
-            "AST_07XT": [
-                f"AST_07XT.003_ImageData{i}" for i in range(1, 10)
-            ],
-            "AST_08": [
-                f"AST_08.003_Emissivity_Mean_Band{i}" for i in range(10, 15)
-            ],
-        }
-        layers = []
-        for layer_name in layer_map.get(product, []):
-            layers.append({"product": f"{product}.003", "layer": layer_name})
-
-        return {
-            "task_name": task_name,
-            "task_type": "area",
-            "params": {
-                "dates": [{"startDate": start_date, "endDate": end_date}],
-                "layers": layers,
-                "geo": aoi,
-                "output": {"format": {"type": "geotiff"}, "projection": "geographic"},
-            },
-        }
+    def _get_bbox(self, center_lon: float, center_lat: float, radius_km: float) -> str:
+        dlat = radius_km / 111.32
+        dlon = radius_km / (111.32 * math.cos(math.radians(center_lat)))
+        return f"{center_lon - dlon},{center_lat - dlat},{center_lon + dlon},{center_lat + dlat}"
 
     def login(self) -> str:
-        resp = httpx.post(
-            f"{APPEEARS_BASE}/login",
-            auth=(self.username, self.password),
-            timeout=30,
-        )
-        resp.raise_for_status()
-        self._token = resp.json()["token"]
+        with httpx.Client(follow_redirects=True, timeout=30) as client:
+            resp = client.get(
+                URS_TOKEN_URL,
+                auth=(self.username, self.password),
+            )
+            resp.raise_for_status()
+            tokens = resp.json()
+            if tokens:
+                self._token = tokens[0]["access_token"]
+            else:
+                resp2 = client.post(
+                    "https://urs.earthdata.nasa.gov/api/users/token",
+                    auth=(self.username, self.password),
+                )
+                resp2.raise_for_status()
+                self._token = resp2.json()["access_token"]
         return self._token
 
-    def submit_task(self, payload: Dict) -> str:
-        if not self._token:
-            self.login()
-        resp = httpx.post(
-            f"{APPEEARS_BASE}/task",
-            json=payload,
-            headers={"Authorization": f"Bearer {self._token}"},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json()["task_id"]
-
-    def wait_for_task(
-        self, task_id: str, poll_interval: int = 30, timeout: int = 3600
-    ) -> bool:
-        if not self._token:
-            self.login()
-        elapsed = 0
-        while elapsed < timeout:
+    def search_granules(
+        self,
+        product: str,
+        bbox: str,
+        start_date: str,
+        end_date: str,
+    ) -> List[Dict]:
+        all_entries = []
+        page = 1
+        while True:
             resp = httpx.get(
-                f"{APPEEARS_BASE}/task/{task_id}",
-                headers={"Authorization": f"Bearer {self._token}"},
+                f"{CMR_BASE}/granules.json",
+                params={
+                    "short_name": product,
+                    "version": "004",
+                    "bounding_box": bbox,
+                    "temporal": f"{start_date}T00:00:00Z,{end_date}T00:00:00Z",
+                    "page_size": 200,
+                    "page_num": page,
+                },
                 timeout=30,
             )
             resp.raise_for_status()
-            status = resp.json()["status"]
-            if status == "done":
-                return True
-            if status == "error":
-                raise RuntimeError(f"AppEEARS task {task_id} failed")
-            time.sleep(poll_interval)
-            elapsed += poll_interval
-        raise TimeoutError(f"AppEEARS task {task_id} timed out after {timeout}s")
+            entries = resp.json().get("feed", {}).get("entry", [])
+            if not entries:
+                break
+            all_entries.extend(entries)
+            page += 1
+        return all_entries
 
-    def download_files(self, task_id: str) -> List[str]:
+    def _get_band_urls(self, granule: Dict, product: str) -> Dict[str, str]:
+        suffixes = BAND_SUFFIXES.get(product, [])
+        band_urls = {}
+        for link in granule.get("links", []):
+            href = link.get("href", "")
+            if not href.startswith("https://"):
+                continue
+            if not href.endswith(".tif"):
+                continue
+            for suffix in suffixes:
+                if suffix in href and "QA_" not in href:
+                    band_urls[suffix] = href
+                    break
+        return band_urls
+
+    def download_granule_bands(
+        self, granule: Dict, product: str
+    ) -> Optional[Dict[str, str]]:
         if not self._token:
             self.login()
         self.ensure_dirs()
 
-        resp = httpx.get(
-            f"{APPEEARS_BASE}/bundle/{task_id}",
-            headers={"Authorization": f"Bearer {self._token}"},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        files = resp.json()["files"]
+        band_urls = self._get_band_urls(granule, product)
+        if not band_urls:
+            return None
 
-        downloaded = []
         raw_dir = os.path.join(self.data_dir, "aster", "raw")
-        for f in files:
-            if not f["file_name"].endswith(".tif"):
-                continue
-            file_path = os.path.join(raw_dir, os.path.basename(f["file_name"]))
-            if os.path.exists(file_path):
-                downloaded.append(file_path)
-                continue
-            resp = httpx.get(
-                f"{APPEEARS_BASE}/bundle/{task_id}/{f['file_id']}",
-                headers={"Authorization": f"Bearer {self._token}"},
-                timeout=300,
-            )
-            resp.raise_for_status()
-            with open(file_path, "wb") as out:
-                out.write(resp.content)
-            downloaded.append(file_path)
+        downloaded = {}
+
+        with httpx.Client(
+            follow_redirects=True,
+            headers={"Authorization": f"Bearer {self._token}"},
+            timeout=300,
+        ) as client:
+            for band_name, url in band_urls.items():
+                filename = os.path.basename(url)
+                file_path = os.path.join(raw_dir, filename)
+
+                if os.path.exists(file_path):
+                    downloaded[band_name] = file_path
+                    continue
+
+                resp = client.get(url)
+                resp.raise_for_status()
+                with open(file_path, "wb") as out:
+                    out.write(resp.content)
+                downloaded[band_name] = file_path
+
         return downloaded
+
+    def download_all_scenes(
+        self,
+        product: str,
+        center_lon: float,
+        center_lat: float,
+        radius_km: float,
+        start_date: str,
+        end_date: str,
+    ) -> List[Dict[str, str]]:
+        bbox = self._get_bbox(center_lon, center_lat, radius_km)
+        granules = self.search_granules(product, bbox, start_date, end_date)
+        print(f"Encontradas {len(granules)} cenas {product}")
+
+        all_scenes = []
+        for i, granule in enumerate(granules):
+            title = granule.get("title", f"scene_{i}")
+            print(f"  Baixando {i+1}/{len(granules)}: {title[:60]}")
+            scene = self.download_granule_bands(granule, product)
+            if scene:
+                all_scenes.append(scene)
+        print(f"Baixadas {len(all_scenes)} cenas com bandas validas")
+        return all_scenes
 
     def has_cached_composite(self, product: str) -> bool:
         composite_dir = os.path.join(self.data_dir, "aster", "composite")

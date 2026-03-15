@@ -1,9 +1,14 @@
 """Pipeline completo ASTER: download + composite + processamento."""
 
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List
 
-from backend.services.aster import AsterService
+import numpy as np
+import rasterio
+from rasterio.crs import CRS
+from rasterio.warp import calculate_default_transform, reproject, Resampling
+
+from backend.services.aster import AsterService, BAND_SUFFIXES
 from backend.services.processing import ProcessingService
 
 
@@ -13,12 +18,25 @@ LAYER_PRODUCT_MAP = {
     "ninomiya-aloh": "AST_07XT",
     "ninomiya-mgoh": "AST_07XT",
     "ninomiya-ferrous": "AST_07XT",
-    "pca-tir": "AST_08",
+    "pca-tir": "AST_05",
 }
 
 PRODUCT_DATE_RANGES = {
     "AST_07XT": ("2000-01-01", "2008-04-01"),
-    "AST_08": ("2000-01-01", "2024-12-31"),
+    "AST_05": ("2000-01-01", "2024-12-31"),
+}
+
+# Ordem das bandas no composite multi-banda
+BAND_ORDER = {
+    "AST_07XT": [
+        "SRF_VNIR_B01", "SRF_VNIR_B02", "SRF_VNIR_B03N",
+        "SRF_SWIR_B04", "SRF_SWIR_B05", "SRF_SWIR_B06",
+        "SRF_SWIR_B07", "SRF_SWIR_B08", "SRF_SWIR_B09",
+    ],
+    "AST_05": [
+        "Emissivity_B10", "Emissivity_B11", "Emissivity_B12",
+        "Emissivity_B13", "Emissivity_B14",
+    ],
 }
 
 
@@ -48,75 +66,86 @@ class AsterPipeline:
         )
 
     def get_required_products(self) -> List[str]:
-        """Retorna lista de produtos ASTER necessarios."""
         return list(PRODUCT_DATE_RANGES.keys())
 
     def get_product_for_layer(self, layer_id: str) -> str:
-        """Retorna o produto ASTER necessario para uma layer."""
         return LAYER_PRODUCT_MAP[layer_id]
 
     def get_processed_path(self, layer_id: str) -> str:
-        """Retorna caminho do raster processado para uma layer."""
         return os.path.join(self.data_dir, "rasters", "processed", f"{layer_id}.tif")
 
     def is_processed(self, layer_id: str) -> bool:
-        """Verifica se a layer ja foi processada."""
         return os.path.exists(self.get_processed_path(layer_id))
 
+    def _build_band_composite(
+        self, scenes: List[Dict[str, str]], band_name: str
+    ) -> np.ndarray:
+        """Calcula mediana de uma banda across todas as cenas."""
+        band_arrays = []
+        for scene in scenes:
+            if band_name not in scene:
+                continue
+            with rasterio.open(scene[band_name]) as src:
+                band_arrays.append(src.read(1).astype(np.float32))
+
+        if not band_arrays:
+            raise ValueError(f"Nenhuma cena com banda {band_name}")
+
+        stacked = np.stack(band_arrays, axis=0)
+        # Substituir zeros e nodata por NaN antes da mediana
+        stacked[stacked <= 0] = np.nan
+        return np.nanmedian(stacked, axis=0).astype(np.float32)
+
     def download_and_composite(self, product: str) -> str:
-        """Baixa cenas ASTER e gera composite mediana.
-
-        Se o composite ja existe em cache, retorna o caminho direto.
-
-        Args:
-            product: Produto ASTER (AST_07XT ou AST_08).
-
-        Returns:
-            Caminho do composite GeoTIFF.
-        """
+        """Baixa cenas ASTER e gera composite mediana multi-banda."""
         if self.aster_service.has_cached_composite(product):
             return self.aster_service.get_composite_path(product)
 
         self.aster_service.ensure_dirs()
-        aoi = self.aster_service.build_aoi_geojson(
-            self.center_lon, self.center_lat, self.radius_km
-        )
         start_date, end_date = PRODUCT_DATE_RANGES[product]
-        payload = self.aster_service.build_task_payload(
-            task_name=f"senrem3_{product}",
+
+        scenes = self.aster_service.download_all_scenes(
             product=product,
-            aoi=aoi,
+            center_lon=self.center_lon,
+            center_lat=self.center_lat,
+            radius_km=self.radius_km,
             start_date=start_date,
             end_date=end_date,
         )
-        task_id = self.aster_service.submit_task(payload)
-        self.aster_service.wait_for_task(task_id)
-        scene_paths = self.aster_service.download_files(task_id)
+
+        if not scenes:
+            raise RuntimeError(f"Nenhuma cena {product} encontrada na area de estudo")
+
+        band_names = BAND_ORDER[product]
+        print(f"Gerando composite mediana de {len(scenes)} cenas, {len(band_names)} bandas...")
+
+        # Usar primeira cena como referencia de geometria
+        first_band = band_names[0]
+        ref_path = scenes[0][first_band]
+        with rasterio.open(ref_path) as ref:
+            ref_transform = ref.transform
+            ref_crs = ref.crs
+            ref_height = ref.height
+            ref_width = ref.width
+
+        composites = []
+        for band_name in band_names:
+            print(f"  Composite {band_name}...")
+            median = self._build_band_composite(scenes, band_name)
+            composites.append(median)
+
+        composite_stack = np.stack(composites, axis=0)
 
         composite_path = self.aster_service.get_composite_path(product)
-        n_bands = 9 if product == "AST_07XT" else 5
-        self.processing_service.build_composite(
-            scene_paths=scene_paths,
-            output_path=composite_path,
-            bands=list(range(1, n_bands + 1)),
+        self.processing_service.save_as_cog(
+            composite_stack, composite_path,
+            transform=ref_transform, crs=ref_crs,
         )
+        print(f"Composite salvo: {composite_path}")
         return composite_path
 
     def process_layer(self, layer_id: str) -> str:
-        """Processa uma layer ASTER completa.
-
-        Executa download + composite (se necessario) e aplica o
-        processamento especifico (Crosta, Ninomiya, PCA TIR).
-
-        Args:
-            layer_id: Identificador da layer (ex: crosta-feox, pca-tir).
-
-        Returns:
-            Caminho do COG processado.
-        """
-        import numpy as np
-        import rasterio
-
+        """Processa uma layer ASTER completa."""
         if self.is_processed(layer_id):
             return self.get_processed_path(layer_id)
 
