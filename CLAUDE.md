@@ -38,8 +38,8 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 - Troca de basemap preserva layers ativas
 - 13 testes automatizados passando
 
-### Fase 3 — ASTER Local + Processamento Avancado (IMPLEMENTADA)
-- Servico ASTER (`backend/services/aster.py`) — download via AppEEARS API (NASA Earthdata)
+### Fase 3 — ASTER Local + Processamento Avancado (CONCLUIDA)
+- Servico ASTER (`backend/services/aster.py`) — download via CMR API + Earthdata Bearer token (AppEEARS NAO tem AST_07XT)
 - Servico de processamento (`backend/services/processing.py`) — PCA, Crosta (PCA dirigida), ratios Ninomiya
 - Servico de tiles (`backend/services/tiles.py`) — serve tiles locais via rio-tiler
 - Pipeline orquestrador (`backend/services/pipeline.py`) — download -> composite -> processamento -> COG
@@ -51,9 +51,17 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
   - Ninomiya Fe2+ B5/B4 (2000-2008)
   - PCA TIR B10-B14 CP2 (2000-2024)
 - Endpoint de tiles: GET /api/tiles/{layer_id}/{z}/{x}/{y}.png
-- Requer conta NASA Earthdata (gratuita): earthdata_username/password em config.py
+- Requer conta NASA Earthdata: credenciais em .env (EARTHDATA_USERNAME/PASSWORD)
+- config.py com model_config = {"env_file": ".env"} para carregar credenciais
 - ASTER SWIR (B4-B9) so existe 2000-2008 (falha do detector)
 - TIR (B10-B14) existe 2000-2024
+- AST_07XT v004 vem em GeoTIFs separados por banda (nao HDF), UTM, int16
+- AST_08 trocado por AST_05 (emissividade) para PCA TIR
+- Composite com reprojecao: todas as bandas reprojetadas para grid comum EPSG:4326 ~30m (1699x1664 pixels)
+- 49 cenas AST_07XT (2000-2008, ~4GB) + 223 cenas AST_05 (2000-2024) baixadas
+- Suffixes reais: AST_07XT=SRF_VNIR_B01..SRF_SWIR_B09, AST_05=SRE_TIR_B10..SRE_TIR_B14
+- Pipeline testado end-to-end: 6 COGs processadas em data/rasters/processed/
+- 34 testes automatizados passando
 - Design: `docs/plans/2026-03-15-fase3-aster-design.md`
 - Plano: `docs/plans/2026-03-15-fase3-implementation.md` (7 tasks)
 
