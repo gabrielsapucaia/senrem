@@ -41,6 +41,22 @@ LAYER_CONFIGS = {
         "is_hillshade": True,
         "description": "SRTM 30m hillshade — relevo e estruturas",
     },
+    "carbonate": {
+        "name": "Carbonatos",
+        "collection": "ASTER/AST_L1T_003",
+        "bands": None,
+        "vis": {"min": 0.8, "max": 1.5, "palette": ["blue", "white", "red"]},
+        "ratio": "B13/B14",
+        "description": "ASTER B13/B14 — indicador de carbonatos",
+    },
+    "silica": {
+        "name": "Silica",
+        "collection": "ASTER/AST_L1T_003",
+        "bands": None,
+        "vis": {"min": 0.8, "max": 1.5, "palette": ["blue", "white", "yellow"]},
+        "ratio": "B13/B10",
+        "description": "ASTER B13/B10 — indicador de silica",
+    },
 }
 
 
@@ -66,6 +82,15 @@ class GEEService:
             .clip(self._region)
         )
 
+    def _get_aster_median(self):
+        return (
+            ee.ImageCollection("ASTER/AST_L1T_003")
+            .filterBounds(self._region)
+            .filterDate("2000-01-01", "2024-12-31")
+            .median()
+            .clip(self._region)
+        )
+
     def _build_image(self, layer_id):
         config = LAYER_CONFIGS[layer_id]
 
@@ -73,7 +98,10 @@ class GEEService:
             dem = ee.Image("USGS/SRTMGL1_003").clip(self._region)
             return ee.Terrain.hillshade(dem)
 
-        median = self._get_sentinel2_median()
+        if config["collection"] == "ASTER/AST_L1T_003":
+            median = self._get_aster_median()
+        else:
+            median = self._get_sentinel2_median()
 
         if "ratio" in config:
             parts = config["ratio"].split("/")
