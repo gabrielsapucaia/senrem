@@ -73,6 +73,24 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 - Design: `docs/plans/2026-03-15-fase3-aster-design.md`
 - Plano: `docs/plans/2026-03-15-fase3-implementation.md` (7 tasks)
 
+### Comparacao GEE vs Local (CONCLUIDA)
+- 6 layers ASTER duplicadas via GEE para comparacao visual com processamento local
+- Layers GEE: Crosta FeOx/OH (PCA via eigendecomposicao), Ninomiya AlOH/MgOH/Fe2+ (ratios L1T), PCA TIR (ASTER GED emissividade 100m)
+- PCA no GEE: `ee.Array.eigen()` + `matrixMultiply` + selecao Crosta automatica via `getInfo()` dos eigenvectors
+- ASTER GED (`NASA/ASTER_GED/AG100_003`) para PCA TIR em vez de download AST_05
+- Vis params GEE: paleta viridis hex + percentil stretch p2/p98 via `reduceRegion`
+- Scale PCA: 60m para VNIR/SWIR, 100m para TIR (evitar memory limit GEE)
+- **Resultado:** layers locais superiores (cobertura continua, sem lacunas), GEE fragmentado (nodata/nuvens)
+- Cache persistente de tile URLs GEE em `data/gee_tile_cache.json`
+- Pre-load automatico na startup: COGs locais instantaneo + GEE em background thread
+- Botao "Atualizar Layers" no frontend para renovar cache GEE sob demanda
+- Endpoint: POST `/api/layers/refresh` — limpa cache GEE e regenera em background
+- GET `/api/layers` retorna `{layers: [...], loading: bool, loaded: int, total: int}`
+- Frontend com polling automatico (3s) durante carregamento + labels verdes para layers prontas
+- Sidebar organizado em grupos: Sentinel-2, ASTER (GEE), ASTER (Local), Terreno, CPRM, Prospectividade
+- 19 layers disponiveis ao abrir o browser (cache carregado do disco)
+- 34 testes passando
+
 ### Fases futuras
 - **Fase 4:** Dados CPRM (geologia, ocorrencias, geofisica via WMS/WFS e PGBC)
 - **Fase 5:** Modelo de prospectividade (weighted overlay, painel de pesos ajustaveis)
@@ -89,9 +107,9 @@ senrem3/
 │   │   ├── config_routes.py # GET /api/config, GET /api/health
 │   │   └── layers.py        # GET /api/layers, POST /api/layers/{id}/generate
 │   ├── services/
-│   │   ├── gee.py           # GEEService: LAYER_CONFIGS, tiles via getMapId()
-│   │   │                    # Filtros: estacao seca + mascara NDVI<0.4
-│   │   ├── aster.py         # AsterService: download via AppEEARS API
+│   │   ├── gee.py           # GEEService: 13 layers GEE (S2+ASTER L1T+GED)
+│   │   │                    # PCA via eigen, ratios, cache, percentil stretch
+│   │   ├── aster.py         # AsterService: download via CMR API
 │   │   ├── processing.py    # ProcessingService: PCA, Crosta, ratios Ninomiya
 │   │   ├── tiles.py         # TileService: serve tiles locais via rio-tiler
 │   │   └── pipeline.py      # AsterPipeline: orquestra download->processamento->COG
@@ -100,7 +118,7 @@ senrem3/
 │   ├── index.html           # SPA: header, sidebar, mapa, status bar
 │   ├── style.css            # Tema escuro (#1a1a2e, #16213e, #e94560)
 │   └── app.js               # MapLibre GL JS, enableLayer/disableLayer, basemaps
-├── tests/                   # 13 testes (pytest + FastAPI TestClient)
+├── tests/                   # 34 testes (pytest + FastAPI TestClient)
 ├── data/                    # rasters/, vectors/, tiles/ (gitignored)
 ├── docs/plans/              # Design + planos de cada fase
 ├── requirements.txt
@@ -112,7 +130,7 @@ senrem3/
 ```bash
 source .venv/bin/activate
 python -m backend.main          # servidor em http://localhost:8000
-python -m pytest tests/ -v      # 13 testes
+python -m pytest tests/ -v      # 34 testes
 ```
 
 ## Configuracao GEE
@@ -127,8 +145,9 @@ python -m pytest tests/ -v      # 13 testes
 |--------|------|-----------|
 | GET | `/api/health` | Health check |
 | GET | `/api/config` | Retorna centro, raio, nome da area de estudo |
-| GET | `/api/layers` | Lista 19 layers com campos available/can_generate |
-| POST | `/api/layers/{id}/generate` | Gera tiles GEE/locais e retorna tile_url |
+| GET | `/api/layers` | Lista 25 layers `{layers, loading, loaded, total}` |
+| POST | `/api/layers/{id}/generate` | Gera tiles GEE/locais e retorna tile_url (usa cache) |
+| POST | `/api/layers/refresh` | Limpa cache GEE e regenera em background |
 | GET | `/api/tiles/{layer_id}/{z}/{x}/{y}.png` | Serve tiles de COGs locais (ASTER) |
 
 ## Convencoes
