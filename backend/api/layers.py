@@ -233,7 +233,8 @@ def generate_layer(layer_id: str):
             raise HTTPException(status_code=400, detail="COG geofisico nao encontrado. Processe os dados XYZ primeiro.")
         from backend.main import tile_service
         is_rgb = layer_id in ("gamma-ternary", "em-resist", "em-gradient")
-        tile_service.register_cog(layer_id, cog_path, is_rgb=is_rgb)
+        default_range = (0, 255) if layer_id in ("em-resist", "em-gradient") else None
+        tile_service.register_cog(layer_id, cog_path, is_rgb=is_rgb, default_range=default_range)
         tile_url = f"/api/tiles/{layer_id}/{{z}}/{{x}}/{{y}}.png"
         result = {"layer_id": layer_id, "name": config["name"], "description": config["description"], "tile_url": tile_url}
         _generated_tiles[layer_id] = result
@@ -382,7 +383,8 @@ def preload_layers(tile_service):
         if os.path.exists(cog_path) and os.path.getsize(cog_path) > 0:
             try:
                 is_rgb = layer_id in ("gamma-ternary", "em-resist", "em-gradient")
-                tile_service.register_cog(layer_id, cog_path, is_rgb=is_rgb)
+                default_range = (0, 255) if layer_id in ("em-resist", "em-gradient") else None
+                tile_service.register_cog(layer_id, cog_path, is_rgb=is_rgb, default_range=default_range)
                 _generated_tiles[layer_id] = {
                     "layer_id": layer_id,
                     "name": config["name"],
