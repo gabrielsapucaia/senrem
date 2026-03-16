@@ -8,7 +8,11 @@ from backend.services.gee import GEEService, LAYER_CONFIGS as GEE_LAYER_CONFIGS
 
 router = APIRouter(prefix="/api")
 
-gee_service = GEEService()
+try:
+    gee_service = GEEService()
+except Exception as e:
+    print(f"AVISO: GEE nao inicializou: {e}")
+    gee_service = None
 
 _generated_tiles = {}
 _preload_status = {"running": False, "done": 0, "total": 0}
@@ -88,8 +92,8 @@ def _check_local_available(layer_id: str, processed_dir: str) -> bool:
 def _register_gee_cog(layer_id: str, cog_path: str):
     """Registra COG GEE no tile_service e atualiza _generated_tiles."""
     from backend.main import tile_service
-    is_rgb = gee_service.is_rgb_layer(layer_id)
-    default_range = gee_service.get_rgb_range(layer_id) if is_rgb else None
+    is_rgb = gee_service.is_rgb_layer(layer_id) if gee_service else False
+    default_range = gee_service.get_rgb_range(layer_id) if (gee_service and is_rgb) else None
     tile_service.register_cog(layer_id, cog_path, is_rgb=is_rgb, default_range=default_range)
 
     config = GEE_LAYER_CONFIGS[layer_id]
@@ -103,7 +107,7 @@ def _register_gee_cog(layer_id: str, cog_path: str):
 
 @router.get("/layers")
 def list_layers():
-    gee_layers = gee_service.get_available_layers()
+    gee_layers = gee_service.get_available_layers() if gee_service else {}
     processed_dir = os.path.join(settings.data_dir, "rasters", "processed")
     has_earthdata = bool(settings.earthdata_username and settings.earthdata_password)
     loading = _preload_status["running"]
@@ -112,7 +116,7 @@ def list_layers():
         if layer["source"] == "gee":
             available = layer["id"] in _generated_tiles
             can_generate = layer["id"] in gee_layers
-            supports_colormap = not gee_service.is_rgb_layer(layer["id"]) if layer["id"] in gee_layers else False
+            supports_colormap = (not gee_service.is_rgb_layer(layer["id"])) if (gee_service and layer["id"] in gee_layers) else (layer["id"] in _generated_tiles)
         elif layer["source"] == "local" and layer["id"] in LOCAL_LAYER_CONFIGS:
             available = layer["id"] in _generated_tiles or _check_local_available(layer["id"], processed_dir)
             can_generate = has_earthdata or available
@@ -132,7 +136,7 @@ def generate_layer(layer_id: str):
     if layer_id in _generated_tiles:
         return _generated_tiles[layer_id]
 
-    gee_layers = gee_service.get_available_layers()
+    gee_layers = gee_service.get_available_layers() if gee_service else {}
 
     # Layer GEE: download como COG
     if layer_id in gee_layers:
@@ -201,6 +205,8 @@ def refresh_layers():
                 os.remove(cog_path)
             del _generated_tiles[layer_id]
 
+    if not gee_service:
+        return {"status": "error", "detail": "GEE nao disponivel"}
     _start_gee_download()
     return {"status": "started", "total": _preload_status["total"]}
 
@@ -285,8 +291,8 @@ def preload_layers(tile_service):
     for layer_id in GEE_LAYER_CONFIGS:
         cog_path = os.path.join(processed_dir, f"{layer_id}.tif")
         if os.path.exists(cog_path):
-            is_rgb = gee_service.is_rgb_layer(layer_id)
-            default_range = gee_service.get_rgb_range(layer_id) if is_rgb else None
+            is_rgb = gee_service.is_rgb_layer(layer_id) if gee_service else False
+            default_range = gee_service.get_rgb_range(layer_id) if (gee_service and is_rgb) else None
             tile_service.register_cog(layer_id, cog_path, is_rgb=is_rgb, default_range=default_range)
             config = GEE_LAYER_CONFIGS[layer_id]
             _generated_tiles[layer_id] = {
