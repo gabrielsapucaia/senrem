@@ -55,6 +55,8 @@ GEOPHYSICS_CONFIGS = {
     "gamma-th": {"name": "Torio (eTh)", "description": "Torio equivalente (ppm) — gamaespectrometria"},
     "gamma-thk": {"name": "Razao Th/K", "description": "Razao Th/K — indicador de alteracao hidrotermal"},
     "gamma-ternary": {"name": "Ternario K-Th-U", "description": "Composicao RGB: R=K, G=Th, B=U"},
+    "em-resist": {"name": "Resistividade EM", "description": "Resistividade eletromagnetica — detalhe Almas/Vale (19.6m)"},
+    "em-gradient": {"name": "Gradiente Horiz. EM", "description": "Gradiente horizontal da resistividade EM — detalhe Almas/Vale (19.6m)"},
 }
 
 LAYERS = [
@@ -96,6 +98,8 @@ LAYERS = [
     {"id": "gamma-th", "name": "Torio (eTh)", "category": "geophysics", "source": "local", "group": "Geofisica"},
     {"id": "gamma-thk", "name": "Razao Th/K", "category": "geophysics", "source": "local", "group": "Geofisica"},
     {"id": "gamma-ternary", "name": "Ternario K-Th-U", "category": "geophysics", "source": "local", "group": "Geofisica"},
+    {"id": "em-resist", "name": "Resistividade EM", "category": "geophysics", "source": "local", "group": "Geofisica (Detalhe)"},
+    {"id": "em-gradient", "name": "Gradiente Horiz. EM", "category": "geophysics", "source": "local", "group": "Geofisica (Detalhe)"},
     # Prospectividade
     {"id": "targets", "name": "Alvos", "category": "prospectivity", "source": "model", "group": "Prospectividade"},
 ]
@@ -147,7 +151,7 @@ def list_layers():
         elif layer["source"] == "local" and layer["id"] in GEOPHYSICS_CONFIGS:
             available = layer["id"] in _generated_tiles or _check_local_available(layer["id"], processed_dir)
             can_generate = True
-            supports_colormap = layer["id"] != "gamma-ternary"
+            supports_colormap = layer["id"] not in ("gamma-ternary", "em-resist", "em-gradient")
         elif layer["source"] == "vector":
             available = vector_service.is_available(layer["id"])
             can_generate = True
@@ -228,7 +232,7 @@ def generate_layer(layer_id: str):
         if not os.path.exists(cog_path):
             raise HTTPException(status_code=400, detail="COG geofisico nao encontrado. Processe os dados XYZ primeiro.")
         from backend.main import tile_service
-        is_rgb = layer_id == "gamma-ternary"
+        is_rgb = layer_id in ("gamma-ternary", "em-resist", "em-gradient")
         tile_service.register_cog(layer_id, cog_path, is_rgb=is_rgb)
         tile_url = f"/api/tiles/{layer_id}/{{z}}/{{x}}/{{y}}.png"
         result = {"layer_id": layer_id, "name": config["name"], "description": config["description"], "tile_url": tile_url}
@@ -377,7 +381,7 @@ def preload_layers(tile_service):
         cog_path = os.path.join(processed_dir, f"{layer_id}.tif")
         if os.path.exists(cog_path) and os.path.getsize(cog_path) > 0:
             try:
-                is_rgb = layer_id == "gamma-ternary"
+                is_rgb = layer_id in ("gamma-ternary", "em-resist", "em-gradient")
                 tile_service.register_cog(layer_id, cog_path, is_rgb=is_rgb)
                 _generated_tiles[layer_id] = {
                     "layer_id": layer_id,
