@@ -1,7 +1,7 @@
 import os
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
@@ -50,20 +50,6 @@ def get_tile_stats(layer_id: str):
         raise HTTPException(status_code=404, detail=f"Stats nao encontradas para '{layer_id}'")
     p2, p98 = tile_service._stats[layer_id]
     return {"p2": p2, "p98": p98}
-
-
-@app.post("/api/upload/{layer_id}")
-async def upload_cog(layer_id: str, file: UploadFile = File(...)):
-    """Endpoint temporario para upload de COGs."""
-    processed_dir = os.path.join(settings.data_dir, "rasters", "processed")
-    os.makedirs(processed_dir, exist_ok=True)
-    cog_path = os.path.join(processed_dir, f"{layer_id}.tif")
-    content = await file.read()
-    with open(cog_path, "wb") as f:
-        f.write(content)
-    # Registrar no preload
-    preload_layers(tile_service)
-    return {"status": "ok", "layer_id": layer_id, "size": len(content)}
 
 
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
