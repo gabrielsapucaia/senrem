@@ -1,34 +1,20 @@
-const BASEMAPS = {
-    satellite: {
-        name: "Satelite",
-        style: {
-            version: 8,
-            sources: {
-                esri: {
-                    type: "raster",
-                    tiles: [
-                        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                    ],
-                    tileSize: 256,
-                    attribution: "Esri"
-                }
-            },
-            layers: [{ id: "esri-satellite", type: "raster", source: "esri" }]
+const BASEMAP_STYLE = {
+    version: 8,
+    sources: {
+        esri: {
+            type: "raster",
+            tiles: [
+                "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+            ],
+            tileSize: 256,
+            attribution: "Esri"
         }
     },
-    topo: {
-        name: "Topo",
-        style: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
-    },
-    dark: {
-        name: "Escuro",
-        style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
-    }
+    layers: [{ id: "esri-satellite", type: "raster", source: "esri" }]
 };
 
 let map;
 let studyArea = null;
-let currentBasemap = "satellite";
 let activeLayers = {};
 let layersData = [];
 let pollInterval = null;
@@ -42,7 +28,7 @@ async function init() {
 
     map = new maplibregl.Map({
         container: "map",
-        style: BASEMAPS[currentBasemap].style,
+        style: BASEMAP_STYLE,
         center: [config.center.lon, config.center.lat],
         zoom: 11
     });
@@ -61,7 +47,6 @@ async function init() {
             `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`;
     });
 
-    setupBasemapSwitcher();
     setupPropertiesPanel();
     await refreshLayersList();
 }
@@ -120,43 +105,12 @@ function addStudyAreaCircle(config) {
         .addTo(map);
 }
 
-function setupBasemapSwitcher() {
-    const container = document.createElement("div");
-    container.className = "basemap-switcher";
-
-    Object.entries(BASEMAPS).forEach(([key, val]) => {
-        const btn = document.createElement("button");
-        btn.className = "basemap-btn" + (key === currentBasemap ? " active" : "");
-        btn.textContent = val.name;
-        btn.onclick = () => {
-            currentBasemap = key;
-            map.setStyle(val.style);
-            map.once("style.load", () => {
-                if (studyArea) addStudyAreaCircle(studyArea);
-                Object.keys(activeLayers).forEach(layerId => {
-                    const checkbox = document.getElementById(`layer-${layerId}`);
-                    if (checkbox && checkbox.checked) {
-                        enableLayer(layerId, checkbox);
-                    }
-                });
-            });
-            container.querySelectorAll(".basemap-btn").forEach(b => b.classList.remove("active"));
-            btn.classList.add("active");
-        };
-        container.appendChild(btn);
-    });
-
-    const layersPanel = document.getElementById("layers-panel");
-    layersPanel.insertBefore(container, layersPanel.querySelector("#layers-list"));
-}
-
 async function refreshLayersList() {
     const list = document.getElementById("layers-list");
     const resp = await fetch("/api/layers").then(r => r.json());
     const layers = resp.layers;
     const isLoading = resp.loading;
 
-    // Atualizar status de carregamento
     if (isLoading) {
         updateStatus(`Carregando layers GEE... ${resp.loaded}/${resp.total}`);
         startPolling();
@@ -165,7 +119,6 @@ async function refreshLayersList() {
         updateStatus("Pronto");
     }
 
-    // Se lista ja existe, apenas atualizar estados
     if (list.children.length > 0) {
         layers.forEach(layer => {
             const checkbox = document.getElementById(`layer-${layer.id}`);
@@ -177,11 +130,9 @@ async function refreshLayersList() {
         return;
     }
 
-    // Primeira renderizacao: criar elementos
     layersData = layers;
     let currentGroup = null;
 
-    // Botao refresh no topo
     const refreshBtn = document.createElement("button");
     refreshBtn.className = "refresh-btn";
     refreshBtn.textContent = "Atualizar Layers";
@@ -192,6 +143,58 @@ async function refreshLayersList() {
         startPolling();
     };
     list.appendChild(refreshBtn);
+
+    // Botoes selecionar/deselecionar todos
+    const toggleDiv = document.createElement("div");
+    toggleDiv.className = "toggle-all";
+    const selectAllBtn = document.createElement("button");
+    selectAllBtn.className = "toggle-btn";
+    selectAllBtn.textContent = "Ativar todas";
+    selectAllBtn.onclick = async () => {
+        for (const layer of layersData) {
+            const cb = document.getElementById(`layer-${layer.id}`);
+            if (cb && !cb.checked && !cb.disabled) {
+                cb.checked = true;
+                await enableLayer(layer.id, cb);
+            }
+        }
+    };
+    const deselectAllBtn = document.createElement("button");
+    deselectAllBtn.className = "toggle-btn";
+    deselectAllBtn.textContent = "Desativar todas";
+    deselectAllBtn.onclick = () => {
+        for (const layerId of Object.keys(activeLayers)) {
+            const cb = document.getElementById(`layer-${layerId}`);
+            if (cb) cb.checked = false;
+            disableLayer(layerId);
+        }
+    };
+    toggleDiv.appendChild(selectAllBtn);
+    toggleDiv.appendChild(deselectAllBtn);
+    list.appendChild(toggleDiv);
+
+    // Basemap como layer especial
+    const basemapHeader = document.createElement("div");
+    basemapHeader.className = "layer-group-header";
+    basemapHeader.textContent = "Basemap";
+    list.appendChild(basemapHeader);
+
+    const basemapItem = document.createElement("div");
+    basemapItem.className = "layer-item";
+    basemapItem.id = "layer-item-basemap";
+    const basemapLabel = document.createElement("label");
+    basemapLabel.textContent = "Satelite";
+    basemapLabel.style.cursor = "pointer";
+    basemapLabel.addEventListener("click", () => {
+        if (selectedLayerId === "basemap") {
+            selectedLayerId = null;
+            showEmptyProperties();
+        } else {
+            selectBasemap();
+        }
+    });
+    basemapItem.appendChild(basemapLabel);
+    list.appendChild(basemapItem);
 
     layers.forEach(layer => {
         if (layer.group && layer.group !== currentGroup) {
@@ -204,6 +207,7 @@ async function refreshLayersList() {
 
         const item = document.createElement("div");
         item.className = "layer-item";
+        item.id = `layer-item-${layer.id}`;
 
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
@@ -225,7 +229,12 @@ async function refreshLayersList() {
         label.addEventListener("click", (e) => {
             if (checkbox.checked) {
                 e.preventDefault();
-                openPropertiesPanel(layer.id);
+                if (selectedLayerId === layer.id) {
+                    selectedLayerId = null;
+                    showEmptyProperties();
+                } else {
+                    selectLayer(layer.id);
+                }
             }
         });
 
@@ -251,7 +260,6 @@ function stopPolling() {
         clearInterval(pollInterval);
         pollInterval = null;
     }
-    // Re-habilitar botao refresh
     const btn = document.querySelector(".refresh-btn");
     if (btn) {
         btn.disabled = false;
@@ -295,6 +303,7 @@ async function enableLayer(layerId, checkbox) {
             layerProps[layerId] = getDefaultProps();
         }
         applyMapLibreProps(layerId);
+        selectLayer(layerId);
         updateStatus(`${data.name} carregada`);
     } catch (err) {
         checkbox.checked = false;
@@ -303,9 +312,6 @@ async function enableLayer(layerId, checkbox) {
 }
 
 function disableLayer(layerId) {
-    if (selectedLayerId === layerId) {
-        closePropertiesPanel();
-    }
     const sourceId = `layer-${layerId}`;
     if (map.getLayer(sourceId)) {
         map.removeLayer(sourceId);
@@ -314,20 +320,67 @@ function disableLayer(layerId) {
         map.removeSource(sourceId);
     }
     delete activeLayers[layerId];
+
+    // Se era a layer selecionada, selecionar outra ativa ou limpar
+    if (selectedLayerId === layerId) {
+        const remaining = Object.keys(activeLayers);
+        if (remaining.length > 0) {
+            selectLayer(remaining[remaining.length - 1]);
+        } else {
+            selectedLayerId = null;
+            showEmptyProperties();
+        }
+    }
+
     updateStatus("Pronto");
 }
 
 function getDefaultProps() {
     return {
         opacity: 70,
-        brightnessMin: 0,
-        brightnessMax: 100,
+        brightness: 100,
         contrast: 0,
         saturation: 0,
         colormap: "viridis",
         vmin: null,
         vmax: null,
     };
+}
+
+function selectLayer(layerId) {
+    if (!activeLayers[layerId]) return;
+
+    document.querySelectorAll(".layer-item.selected").forEach(el => el.classList.remove("selected"));
+
+    const item = document.getElementById(`layer-item-${layerId}`);
+    if (item) item.classList.add("selected");
+
+    openPropertiesPanel(layerId);
+}
+
+function selectBasemap() {
+    document.querySelectorAll(".layer-item.selected").forEach(el => el.classList.remove("selected"));
+    const item = document.getElementById("layer-item-basemap");
+    if (item) item.classList.add("selected");
+
+    selectedLayerId = "basemap";
+    if (!layerProps["basemap"]) {
+        layerProps["basemap"] = getDefaultProps();
+    }
+
+    const p = layerProps["basemap"];
+    document.getElementById("props-layer-name").textContent = "Satelite";
+    document.getElementById("props-content").style.display = "block";
+    document.getElementById("props-empty").style.display = "none";
+    document.getElementById("prop-opacity").value = p.opacity;
+    document.getElementById("prop-opacity-val").textContent = p.opacity + "%";
+    document.getElementById("prop-brightness").value = p.brightness;
+    document.getElementById("prop-brightness-val").textContent = (p.brightness / 100).toFixed(2);
+    document.getElementById("prop-contrast").value = p.contrast;
+    document.getElementById("prop-contrast-val").textContent = (p.contrast / 100).toFixed(2);
+    document.getElementById("prop-saturation").value = p.saturation;
+    document.getElementById("prop-saturation-val").textContent = (p.saturation / 100).toFixed(2);
+    document.getElementById("props-local-controls").style.display = "none";
 }
 
 async function openPropertiesPanel(layerId) {
@@ -342,6 +395,8 @@ async function openPropertiesPanel(layerId) {
     const supportsColormap = layer && layer.supports_colormap;
 
     document.getElementById("props-layer-name").textContent = layer ? layer.name : layerId;
+    document.getElementById("props-content").style.display = "block";
+    document.getElementById("props-empty").style.display = "none";
 
     if (supportsColormap && !layerStats[layerId]) {
         try {
@@ -355,10 +410,8 @@ async function openPropertiesPanel(layerId) {
     const p = layerProps[layerId];
     document.getElementById("prop-opacity").value = p.opacity;
     document.getElementById("prop-opacity-val").textContent = p.opacity + "%";
-    document.getElementById("prop-brightness-min").value = p.brightnessMin;
-    document.getElementById("prop-brightness-min-val").textContent = (p.brightnessMin / 100).toFixed(2);
-    document.getElementById("prop-brightness-max").value = p.brightnessMax;
-    document.getElementById("prop-brightness-max-val").textContent = (p.brightnessMax / 100).toFixed(2);
+    document.getElementById("prop-brightness").value = p.brightness;
+    document.getElementById("prop-brightness-val").textContent = (p.brightness / 100).toFixed(2);
     document.getElementById("prop-contrast").value = p.contrast;
     document.getElementById("prop-contrast-val").textContent = (p.contrast / 100).toFixed(2);
     document.getElementById("prop-saturation").value = p.saturation;
@@ -372,39 +425,45 @@ async function openPropertiesPanel(layerId) {
         const stats = layerStats[layerId];
         if (stats) {
             const range = stats.p98 - stats.p2;
-            const sliderMin = Math.floor((stats.p2 - range) * 100);
-            const sliderMax = Math.ceil((stats.p98 + range) * 100);
-            const vminSlider = document.getElementById("prop-vmin");
-            const vmaxSlider = document.getElementById("prop-vmax");
-            vminSlider.min = sliderMin;
-            vminSlider.max = sliderMax;
-            vmaxSlider.min = sliderMin;
-            vmaxSlider.max = sliderMax;
-            vminSlider.value = p.vmin !== null ? Math.round(p.vmin * 100) : Math.round(stats.p2 * 100);
-            vmaxSlider.value = p.vmax !== null ? Math.round(p.vmax * 100) : Math.round(stats.p98 * 100);
-            document.getElementById("prop-vmin-val").textContent = (parseInt(vminSlider.value) / 100).toFixed(2);
-            document.getElementById("prop-vmax-val").textContent = (parseInt(vmaxSlider.value) / 100).toFixed(2);
+            const absMin = stats.p2 - range;
+            const absMax = stats.p98 + range;
+            const vmin = p.vmin !== null ? p.vmin : stats.p2;
+            const vmax = p.vmax !== null ? p.vmax : stats.p98;
+            setRangeSlider("range-slider-cut", vmin, vmax, absMin, absMax);
+            document.getElementById("prop-vrange-val").textContent =
+                `${vmin.toFixed(2)} — ${vmax.toFixed(2)}`;
         }
     } else {
         localControls.style.display = "none";
     }
-
-    document.getElementById("properties-panel").classList.add("open");
 }
 
-function closePropertiesPanel() {
-    selectedLayerId = null;
-    document.getElementById("properties-panel").classList.remove("open");
+function showEmptyProperties() {
+    document.getElementById("props-layer-name").textContent = "Propriedades";
+    document.getElementById("props-content").style.display = "none";
+    document.getElementById("props-empty").style.display = "block";
+    document.querySelectorAll(".layer-item.selected").forEach(el => el.classList.remove("selected"));
 }
 
 function applyMapLibreProps(layerId) {
-    const sourceId = `layer-${layerId}`;
     const p = layerProps[layerId];
-    if (!p || !map.getLayer(sourceId)) return;
+    if (!p) return;
+
+    if (layerId === "basemap") {
+        if (map.getLayer("esri-satellite")) {
+            map.setPaintProperty("esri-satellite", "raster-opacity", p.opacity / 100);
+            map.setPaintProperty("esri-satellite", "raster-brightness-max", p.brightness / 100);
+            map.setPaintProperty("esri-satellite", "raster-contrast", p.contrast / 100);
+            map.setPaintProperty("esri-satellite", "raster-saturation", p.saturation / 100);
+        }
+        return;
+    }
+
+    const sourceId = `layer-${layerId}`;
+    if (!map.getLayer(sourceId)) return;
 
     map.setPaintProperty(sourceId, "raster-opacity", p.opacity / 100);
-    map.setPaintProperty(sourceId, "raster-brightness-min", p.brightnessMin / 100);
-    map.setPaintProperty(sourceId, "raster-brightness-max", p.brightnessMax / 100);
+    map.setPaintProperty(sourceId, "raster-brightness-max", p.brightness / 100);
     map.setPaintProperty(sourceId, "raster-contrast", p.contrast / 100);
     map.setPaintProperty(sourceId, "raster-saturation", p.saturation / 100);
 }
@@ -428,12 +487,9 @@ function rebuildTileUrl(layerId) {
 }
 
 function setupPropertiesPanel() {
-    document.getElementById("props-close").addEventListener("click", closePropertiesPanel);
-
     const sliderConfigs = [
         { id: "prop-opacity", valId: "prop-opacity-val", prop: "opacity", format: v => v + "%" },
-        { id: "prop-brightness-min", valId: "prop-brightness-min-val", prop: "brightnessMin", format: v => (v / 100).toFixed(2) },
-        { id: "prop-brightness-max", valId: "prop-brightness-max-val", prop: "brightnessMax", format: v => (v / 100).toFixed(2) },
+        { id: "prop-brightness", valId: "prop-brightness-val", prop: "brightness", format: v => (v / 100).toFixed(2) },
         { id: "prop-contrast", valId: "prop-contrast-val", prop: "contrast", format: v => (v / 100).toFixed(2) },
         { id: "prop-saturation", valId: "prop-saturation-val", prop: "saturation", format: v => (v / 100).toFixed(2) },
     ];
@@ -459,20 +515,115 @@ function setupPropertiesPanel() {
         }
     });
 
-    // Vmin/Vmax
-    ["prop-vmin", "prop-vmax"].forEach(id => {
-        const slider = document.getElementById(id);
-        const valSpan = document.getElementById(id + "-val");
-        const prop = id === "prop-vmin" ? "vmin" : "vmax";
-        slider.addEventListener("input", () => {
-            const val = parseInt(slider.value) / 100;
-            valSpan.textContent = val.toFixed(2);
+    // Custom range slider: Corte (vmin/vmax)
+    initRangeSlider("range-slider-cut", {
+        onUpdate: (lo, hi) => {
+            document.getElementById("prop-vrange-val").textContent =
+                `${lo.toFixed(2)} — ${hi.toFixed(2)}`;
             if (selectedLayerId && layerProps[selectedLayerId]) {
-                layerProps[selectedLayerId][prop] = val;
+                layerProps[selectedLayerId].vmin = lo;
+                layerProps[selectedLayerId].vmax = hi;
                 rebuildTileUrl(selectedLayerId);
             }
-        });
+        }
     });
+}
+
+// Custom range slider com drag de handles e da barra central
+const rangeSliders = {};
+
+function initRangeSlider(id, opts) {
+    const container = document.getElementById(id);
+    const fill = container.querySelector(".range-fill");
+    const handleMin = container.querySelector(".range-handle-min");
+    const handleMax = container.querySelector(".range-handle-max");
+
+    const state = { min: 0, max: 1, absMin: 0, absMax: 1, onUpdate: opts.onUpdate };
+    rangeSliders[id] = state;
+
+    function render() {
+        const range = state.absMax - state.absMin;
+        if (range <= 0) return;
+        const left = ((state.min - state.absMin) / range) * 100;
+        const right = ((state.max - state.absMin) / range) * 100;
+        handleMin.style.left = left + "%";
+        handleMax.style.left = right + "%";
+        fill.style.left = left + "%";
+        fill.style.width = (right - left) + "%";
+    }
+
+    function startDrag(e, type) {
+        e.preventDefault();
+        const rect = container.getBoundingClientRect();
+        const range = state.absMax - state.absMin;
+        const startX = e.clientX || e.touches[0].clientX;
+        const startMin = state.min;
+        const startMax = state.max;
+        const span = startMax - startMin;
+
+        function onMove(ev) {
+            const x = ev.clientX || ev.touches[0].clientX;
+            const dx = ((x - startX) / rect.width) * range;
+
+            if (type === "min") {
+                state.min = Math.max(state.absMin, Math.min(state.max - range * 0.01, startMin + dx));
+            } else if (type === "max") {
+                state.max = Math.min(state.absMax, Math.max(state.min + range * 0.01, startMax + dx));
+            } else {
+                let newMin = startMin + dx;
+                let newMax = startMax + dx;
+                if (newMin < state.absMin) { newMin = state.absMin; newMax = state.absMin + span; }
+                if (newMax > state.absMax) { newMax = state.absMax; newMin = state.absMax - span; }
+                state.min = newMin;
+                state.max = newMax;
+            }
+            render();
+            state.onUpdate(state.min, state.max);
+        }
+
+        function onUp() {
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+            document.removeEventListener("touchmove", onMove);
+            document.removeEventListener("touchend", onUp);
+        }
+
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+        document.addEventListener("touchmove", onMove);
+        document.addEventListener("touchend", onUp);
+    }
+
+    handleMin.addEventListener("mousedown", e => startDrag(e, "min"));
+    handleMin.addEventListener("touchstart", e => startDrag(e, "min"));
+    handleMax.addEventListener("mousedown", e => startDrag(e, "max"));
+    handleMax.addEventListener("touchstart", e => startDrag(e, "max"));
+    fill.addEventListener("mousedown", e => startDrag(e, "fill"));
+    fill.addEventListener("touchstart", e => startDrag(e, "fill"));
+
+    render();
+    return state;
+}
+
+function setRangeSlider(id, min, max, absMin, absMax) {
+    const state = rangeSliders[id];
+    if (!state) return;
+    state.absMin = absMin;
+    state.absMax = absMax;
+    state.min = min;
+    state.max = max;
+    const container = document.getElementById(id);
+    const fill = container.querySelector(".range-fill");
+    const handleMin = container.querySelector(".range-handle-min");
+    const handleMax = container.querySelector(".range-handle-max");
+    const range = absMax - absMin;
+    if (range <= 0) return;
+    const left = ((min - absMin) / range) * 100;
+    const right = ((max - absMin) / range) * 100;
+    handleMin.style.left = left + "%";
+    handleMax.style.left = right + "%";
+    fill.style.left = left + "%";
+    fill.style.width = (right - left) + "%";
 }
 
 function updateStatus(text) {

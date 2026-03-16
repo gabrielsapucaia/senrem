@@ -29,24 +29,21 @@
 
         <aside id="properties-panel">
             <div id="props-header">
-                <h2 id="props-layer-name">Layer</h2>
-                <button id="props-close">&times;</button>
+                <h2 id="props-layer-name">Propriedades</h2>
             </div>
-            <div id="props-content">
+            <div id="props-empty">
+                <p>Selecione uma layer ativa para ajustar</p>
+            </div>
+            <div id="props-content" style="display:none">
                 <div class="prop-group">
                     <label>Opacidade</label>
                     <input type="range" id="prop-opacity" min="0" max="100" value="70" step="1">
                     <span class="prop-value" id="prop-opacity-val">70%</span>
                 </div>
                 <div class="prop-group">
-                    <label>Brilho Min</label>
-                    <input type="range" id="prop-brightness-min" min="0" max="100" value="0" step="1">
-                    <span class="prop-value" id="prop-brightness-min-val">0.00</span>
-                </div>
-                <div class="prop-group">
-                    <label>Brilho Max</label>
-                    <input type="range" id="prop-brightness-max" min="0" max="100" value="100" step="1">
-                    <span class="prop-value" id="prop-brightness-max-val">1.00</span>
+                    <label>Brilho</label>
+                    <input type="range" id="prop-brightness" min="0" max="100" value="100" step="1">
+                    <span class="prop-value" id="prop-brightness-val">1.00</span>
                 </div>
                 <div class="prop-group">
                     <label>Contraste</label>
@@ -72,14 +69,14 @@
                         </select>
                     </div>
                     <div class="prop-group">
-                        <label>Min</label>
-                        <input type="range" id="prop-vmin" min="0" max="1000" value="0" step="1">
-                        <span class="prop-value" id="prop-vmin-val">0.00</span>
-                    </div>
-                    <div class="prop-group">
-                        <label>Max</label>
-                        <input type="range" id="prop-vmax" min="0" max="1000" value="1000" step="1">
-                        <span class="prop-value" id="prop-vmax-val">1.00</span>
+                        <label>Corte</label>
+                        <div class="range-slider" id="range-slider-cut">
+                            <div class="range-track"></div>
+                            <div class="range-fill"></div>
+                            <div class="range-handle range-handle-min" data-handle="min"></div>
+                            <div class="range-handle range-handle-max" data-handle="max"></div>
+                        </div>
+                        <span class="prop-value" id="prop-vrange-val">0.00 — 10.00</span>
                     </div>
                 </div>
             </div>
