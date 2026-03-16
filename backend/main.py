@@ -1,9 +1,7 @@
 import os
 from typing import Optional
 
-import json as json_lib
-
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -60,17 +58,6 @@ def get_vector_geojson(layer_id: str):
     if not geojson:
         raise HTTPException(status_code=404, detail=f"GeoJSON nao encontrado para '{layer_id}'")
     return JSONResponse(content=geojson)
-
-
-@app.post("/api/vectors/{layer_id}/upload")
-async def upload_vector(layer_id: str, request: Request):
-    vectors_dir = os.path.join(settings.data_dir, "vectors")
-    os.makedirs(vectors_dir, exist_ok=True)
-    body = await request.body()
-    path = os.path.join(vectors_dir, f"{layer_id}.geojson")
-    with open(path, "wb") as f:
-        f.write(body)
-    return {"status": "ok", "layer_id": layer_id, "size": len(body)}
 
 
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
