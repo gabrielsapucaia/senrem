@@ -126,6 +126,24 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 - Endpoint: GET `/api/tiles/{layer_id}/stats` retorna `{p2, p98}`
 - 38 testes passando
 
+### Deploy na Railway (CONCLUIDO)
+- **URL producao:** https://senrem-production.up.railway.app
+- **GitHub:** git@github.com:gabrielsapucaia/senrem.git (branch main)
+- **Plataforma:** Railway (projeto `respectful-perfection`, regiao us-east4)
+- **Dockerfile:** Python 3.11-slim + libgdal-dev, serve via `python -m backend.main`
+- **Volume persistente:** montado em `/app/data` para COGs (205MB, 19 layers)
+- **GEE Service Account:** `senrem3-gee@c3po-461514.iam.gserviceaccount.com`
+  - Roles: `earthengine.admin` + `serviceUsageConsumer`
+  - Chave JSON na variavel de ambiente `GEE_SERVICE_ACCOUNT_KEY`
+  - Localmente: credenciais via `earthengine authenticate` (sem service account)
+- **Variaveis Railway:** `PORT=8000`, `GEE_SERVICE_ACCOUNT_KEY`
+- **Deploy automatico:** push no GitHub dispara rebuild na Railway
+- **GEE init resiliente:** se GEE falhar no init, app sobe sem GEE (layers existentes no disco funcionam)
+- **COGs corrompidos:** startup ignora arquivos vazios/corrompidos (remove e loga aviso)
+- **19 layers disponíveis** em producao (COGs enviados via endpoint temporario de upload)
+- **Plano trial:** 30 dias ou $5.00, 512MB RAM — download GEE com grid pode crashar por OOM
+- 38 testes passando
+
 ### Fases futuras
 - **Fase 4:** Dados CPRM (geologia, ocorrencias, geofisica via WMS/WFS e PGBC)
 - **Fase 5:** Modelo de prospectividade (weighted overlay, painel de pesos ajustaveis)
@@ -137,13 +155,14 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 senrem3/
 ├── backend/
 │   ├── main.py              # FastAPI app, monta routers + serve frontend
-│   ├── config.py            # Settings: coordenadas, raio, gee_project=c3po-461514
+│   ├── config.py            # Settings: coordenadas, raio, gee_project, gee_service_account_key
 │   ├── api/
 │   │   ├── config_routes.py # GET /api/config, GET /api/health
 │   │   └── layers.py        # GET /api/layers, POST /api/layers/{id}/generate
 │   ├── services/
 │   │   ├── gee.py           # GEEService: 13 layers GEE (S2+ASTER L1T+GED)
 │   │   │                    # PCA via eigen, ratios, download COG com grid paralelo
+│   │   │                    # Suporte a service account via GEE_SERVICE_ACCOUNT_KEY
 │   │   ├── aster.py         # AsterService: download via CMR API
 │   │   ├── processing.py    # ProcessingService: PCA, Crosta, ratios Ninomiya
 │   │   ├── tiles.py         # TileService: serve tiles locais via rio-tiler (RGB + singleband)
@@ -156,23 +175,38 @@ senrem3/
 ├── tests/                   # 38 testes (pytest + FastAPI TestClient)
 ├── data/                    # rasters/, vectors/, tiles/ (gitignored)
 ├── docs/plans/              # Design + planos de cada fase
+├── Dockerfile               # Deploy: python:3.11-slim + libgdal-dev
+├── .dockerignore            # Exclui data/, .env, .git/, docs/, tests/
+├── railway.json             # Config Railway (Dockerfile, healthcheck, restart)
 ├── requirements.txt
-└── .gitignore
+└── .gitignore               # Exclui data/, .env, .venv/, .DS_Store, *-service-account-key.json
 ```
 
 ## Como rodar
 
+### Local
 ```bash
 source .venv/bin/activate
 python -m backend.main          # servidor em http://localhost:8000
 python -m pytest tests/ -v      # 38 testes
 ```
 
+### Deploy (Railway)
+```bash
+git push                        # deploy automatico via GitHub integration
+railway logs                    # ver logs do servidor
+railway variables               # ver/editar variaveis de ambiente
+```
+
 ## Configuracao GEE
 
 - Projeto Google Cloud: `c3po-461514`
-- Autenticacao: `earthengine authenticate` + `earthengine set_project c3po-461514`
-- Configurado em `backend/config.py` campo `gee_project`
+- **Local:** `earthengine authenticate` + `earthengine set_project c3po-461514`
+- **Servidor:** Service account `senrem3-gee@c3po-461514.iam.gserviceaccount.com`
+  - Variavel `GEE_SERVICE_ACCOUNT_KEY` com JSON da chave
+  - Roles: `earthengine.admin`, `serviceUsageConsumer`
+- Configurado em `backend/config.py` campos `gee_project` e `gee_service_account_key`
+- Se `gee_service_account_key` definida → usa service account; senao → credenciais locais
 
 ## API Endpoints
 
@@ -180,7 +214,7 @@ python -m pytest tests/ -v      # 38 testes
 |--------|------|-----------|
 | GET | `/api/health` | Health check |
 | GET | `/api/config` | Retorna centro, raio, nome da area de estudo |
-| GET | `/api/layers` | Lista 25 layers `{layers, loading, loaded, total}` |
+| GET | `/api/layers` | Lista 24 layers `{layers, loading, loaded, total}` |
 | POST | `/api/layers/{id}/generate` | Baixa COG GEE/local e retorna tile_url local |
 | POST | `/api/layers/refresh` | Apaga COGs GEE e re-baixa do zero em background |
 | GET | `/api/tiles/{layer_id}/{z}/{x}/{y}.png` | Serve tiles de COGs locais (aceita ?colormap, ?vmin, ?vmax) |
@@ -188,7 +222,7 @@ python -m pytest tests/ -v      # 38 testes
 
 ## Convencoes
 
-- Python 3.9.6 (versao do sistema no macOS)
+- Python 3.9.6 local (macOS), Python 3.11 no Docker/Railway
 - FastAPI com routers em `backend/api/`, prefixo `/api`
 - Frontend vanilla (HTML/CSS/JS), sem framework, MapLibre GL JS v4.7.1 via CDN
 - Testes com pytest + FastAPI TestClient
@@ -198,6 +232,7 @@ python -m pytest tests/ -v      # 38 testes
 - Tiles GEE servidos localmente via COGs (download via `getDownloadURL`, nao mais `getMapId`)
 - Vis params dos ratios DEVEM ser calibrados com percentis reais (p2/p98) via GEE reduceRegion
 - Ratios espectrais DEVEM usar estacao seca + mascara NDVI<0.4 para minimizar vegetacao
+- Dados pesados (COGs, cenas ASTER) ficam fora do git — .gitignore exclui data/
 
 ## Decisoes de design
 
@@ -209,6 +244,8 @@ python -m pytest tests/ -v      # 38 testes
 - **Mascara NDVI < 0.4:** 62% da area = solo exposto. Analise confirmou que qualityMosaic introduz artefatos (sombras). Mascara urbana desnecessaria (0.11% AOI)
 - **Modelo de prospectividade:** Knowledge-driven (fuzzy/weighted overlay) como base, data-driven (RF/SVM) como complemento
 - **Pesos do modelo:** Ajustaveis pelo usuario no frontend (sao hipoteses geologicas, nao constantes)
+- **Por que Railway?** Suporta Docker com GDAL/rasterio, volume persistente para COGs, deploy automatico via GitHub. Vercel nao suporta backend Python pesado.
+- **GEE Service Account:** Permite autenticacao no servidor sem `earthengine authenticate` interativo. Chave JSON na env var.
 
 ## Documentacao detalhada
 
