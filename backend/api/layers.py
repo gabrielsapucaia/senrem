@@ -151,7 +151,7 @@ def list_layers():
         elif layer["source"] == "local" and layer["id"] in GEOPHYSICS_CONFIGS:
             available = layer["id"] in _generated_tiles or _check_local_available(layer["id"], processed_dir)
             can_generate = True
-            supports_colormap = layer["id"] not in ("gamma-ternary", "em-resist", "em-gradient")
+            supports_colormap = layer["id"] != "gamma-ternary"
         elif layer["source"] == "vector":
             available = vector_service.is_available(layer["id"])
             can_generate = True
@@ -232,9 +232,8 @@ def generate_layer(layer_id: str):
         if not os.path.exists(cog_path):
             raise HTTPException(status_code=400, detail="COG geofisico nao encontrado. Processe os dados XYZ primeiro.")
         from backend.main import tile_service
-        is_rgb = layer_id in ("gamma-ternary", "em-resist", "em-gradient")
-        default_range = (0, 255) if layer_id in ("em-resist", "em-gradient") else None
-        tile_service.register_cog(layer_id, cog_path, is_rgb=is_rgb, default_range=default_range)
+        is_rgb = layer_id == "gamma-ternary"
+        tile_service.register_cog(layer_id, cog_path, is_rgb=is_rgb)
         tile_url = f"/api/tiles/{layer_id}/{{z}}/{{x}}/{{y}}.png"
         result = {"layer_id": layer_id, "name": config["name"], "description": config["description"], "tile_url": tile_url}
         _generated_tiles[layer_id] = result
@@ -382,7 +381,7 @@ def preload_layers(tile_service):
         cog_path = os.path.join(processed_dir, f"{layer_id}.tif")
         if os.path.exists(cog_path) and os.path.getsize(cog_path) > 0:
             try:
-                is_rgb = layer_id in ("gamma-ternary", "em-resist", "em-gradient")
+                is_rgb = layer_id == "gamma-ternary"
                 default_range = (0, 255) if layer_id in ("em-resist", "em-gradient") else None
                 tile_service.register_cog(layer_id, cog_path, is_rgb=is_rgb, default_range=default_range)
                 _generated_tiles[layer_id] = {
