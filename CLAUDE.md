@@ -140,12 +140,33 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 - **Deploy automatico:** push no GitHub dispara rebuild na Railway
 - **GEE init resiliente:** se GEE falhar no init, app sobe sem GEE (layers existentes no disco funcionam)
 - **COGs corrompidos:** startup ignora arquivos vazios/corrompidos (remove e loga aviso)
-- **19 layers disponíveis** em producao (COGs enviados via endpoint temporario de upload)
+- **28+ layers disponíveis** em producao (COGs enviados via endpoint temporario de upload)
 - **Plano trial:** 30 dias ou $5.00, 512MB RAM — download GEE com grid pode crashar por OOM
-- 38 testes passando
+- 59 testes passando
+
+### Fase 4 — Dados CPRM/SGB e Aerogeofísica (CONCLUIDA)
+- Servico CPRM (`backend/services/cprm.py`) — download WFS GeoSGB, cache GeoJSON local
+  - `geosgb:litoestratigrafia_estados` — 116 poligonos geologicos na area (1:500k)
+  - `geosgb:ocorrencias_recursos_minerais` — 8 pontos (3 de ouro: Mina do Paiol, Garimpo Vira Saia, Corrego Paiol)
+- Servico geofisica (`backend/services/geophysics.py`) — processamento XYZ bruto Projeto 1073 Tocantins
+  - Parser Geosoft XYZ (magnetico e gamaespectrometrico)
+  - Recorte por bbox da area de estudo (~5MB de pontos de 6.8GB total)
+  - Interpolacao cubic via `scipy.griddata` a 125m (~0.00125°)
+  - Derivados magneticos via FFT: 1a derivada vertical, amplitude sinal analitico
+  - Ternario K-Th-U: RGB normalizado p2/p98
+- EM resistividade (detalhe Almas/Vale): RGB pre-renderizado convertido para single-band via hue extraction
+- WFS endpoint: `https://geoservicos.sgb.gov.br/geoserver/wfs`
+- 12 novas layers:
+  - CPRM: Direitos Minerarios (ANM), Geologia Litologia, Geologia Idade, Ocorrencias Minerais
+  - Geofisica: Campo Magnetico, 1DV, Sinal Analitico, K%, eTh, Th/K, Ternario K-Th-U
+  - Geofisica Detalhe: Resistividade EM, Gradiente Horizontal EM
+- Frontend: rendering generico vetorial (poligonos geologia com cor por sigla/era, pontos ocorrencias com popup)
+- Endpoint: GET `/api/vectors/{layer_id}.geojson` retorna GeoJSON
+- 59 testes passando
+- Design: `docs/plans/2026-03-15-fase4-cprm-design.md`
+- Plano: `docs/plans/2026-03-15-fase4-implementation.md`
 
 ### Fases futuras
-- **Fase 4:** Dados CPRM (geologia, ocorrencias, geofisica via WMS/WFS e PGBC)
 - **Fase 5:** Modelo de prospectividade (weighted overlay, painel de pesos ajustaveis)
 - **Fase 6:** SAR/lineamentos, modelo data-driven (RF/SVM), export de relatorios
 
@@ -166,13 +187,16 @@ senrem3/
 │   │   ├── aster.py         # AsterService: download via CMR API
 │   │   ├── processing.py    # ProcessingService: PCA, Crosta, ratios Ninomiya
 │   │   ├── tiles.py         # TileService: serve tiles locais via rio-tiler (RGB + singleband)
-│   │   └── pipeline.py      # AsterPipeline: orquestra download->processamento->COG
+│   │   ├── pipeline.py      # AsterPipeline: orquestra download->processamento->COG
+│   │   ├── cprm.py          # CPRMService: download WFS GeoSGB (geologia, ocorrencias)
+│   │   ├── geophysics.py    # GeophysicsProcessor: parser XYZ, interpolacao, FFT derivados
+│   │   └── vectors.py       # VectorService: ANM mining rights + CPRM vetoriais
 │   └── models/              # (vazio, para Fase 5: prospectivity.py)
 ├── frontend/
 │   ├── index.html           # SPA: header, sidebar, mapa, status bar
 │   ├── style.css            # Tema escuro (#1a1a2e, #16213e, #e94560)
 │   └── app.js               # MapLibre GL JS, enableLayer/disableLayer, basemaps
-├── tests/                   # 38 testes (pytest + FastAPI TestClient)
+├── tests/                   # 59 testes (pytest + FastAPI TestClient)
 ├── data/                    # rasters/, vectors/, tiles/ (gitignored)
 ├── docs/plans/              # Design + planos de cada fase
 ├── Dockerfile               # Deploy: python:3.11-slim + libgdal-dev
@@ -214,11 +238,12 @@ railway variables               # ver/editar variaveis de ambiente
 |--------|------|-----------|
 | GET | `/api/health` | Health check |
 | GET | `/api/config` | Retorna centro, raio, nome da area de estudo |
-| GET | `/api/layers` | Lista 24 layers `{layers, loading, loaded, total}` |
+| GET | `/api/layers` | Lista 33 layers `{layers, loading, loaded, total}` |
 | POST | `/api/layers/{id}/generate` | Baixa COG GEE/local e retorna tile_url local |
 | POST | `/api/layers/refresh` | Apaga COGs GEE e re-baixa do zero em background |
 | GET | `/api/tiles/{layer_id}/{z}/{x}/{y}.png` | Serve tiles de COGs locais (aceita ?colormap, ?vmin, ?vmax) |
 | GET | `/api/tiles/{layer_id}/stats` | Retorna percentis p2/p98 da layer para sliders min/max |
+| GET | `/api/vectors/{layer_id}.geojson` | Retorna GeoJSON de layer vetorial (geologia, ocorrencias, ANM) |
 
 ## Convencoes
 
