@@ -245,6 +245,22 @@ async function refreshLayersList() {
         item.appendChild(checkbox);
         item.appendChild(label);
         list.appendChild(item);
+
+        if (layer.id === "mining-rights") {
+            const legend = document.createElement("div");
+            legend.className = "vector-legend";
+            legend.id = `legend-${layer.id}`;
+            legend.style.display = "none";
+            legend.innerHTML = `
+                <span class="legend-item"><span class="legend-swatch" style="background:#FFD700;border-color:#FFD700"></span>Aura Minerals</span>
+                <span class="legend-item"><span class="legend-swatch" style="background:#888888;border-color:#888888"></span>Outros</span>
+            `;
+            list.appendChild(legend);
+
+            checkbox.addEventListener("change", () => {
+                legend.style.display = checkbox.checked ? "flex" : "none";
+            });
+        }
     });
 }
 
@@ -276,29 +292,12 @@ async function enableLayer(layerId, checkbox) {
                 return r.json();
             });
 
-        const sourceId = `layer-${layerId}`;
-
-        if (map.getSource(sourceId)) {
-            map.removeLayer(sourceId);
-            map.removeSource(sourceId);
+        if (data.type === "vector") {
+            await enableVectorLayer(layerId, data);
+        } else {
+            enableRasterLayer(layerId, data);
         }
 
-        map.addSource(sourceId, {
-            type: "raster",
-            tiles: [data.tile_url],
-            tileSize: 256
-        });
-
-        map.addLayer({
-            id: sourceId,
-            type: "raster",
-            source: sourceId,
-            paint: {
-                "raster-opacity": 0.7
-            }
-        }, "study-area-fill");
-
-        activeLayers[layerId] = sourceId;
         if (!layerProps[layerId]) {
             layerProps[layerId] = getDefaultProps();
         }
@@ -311,13 +310,162 @@ async function enableLayer(layerId, checkbox) {
     }
 }
 
+function enableRasterLayer(layerId, data) {
+    const sourceId = `layer-${layerId}`;
+
+    if (map.getSource(sourceId)) {
+        map.removeLayer(sourceId);
+        map.removeSource(sourceId);
+    }
+
+    map.addSource(sourceId, {
+        type: "raster",
+        tiles: [data.tile_url],
+        tileSize: 256
+    });
+
+    map.addLayer({
+        id: sourceId,
+        type: "raster",
+        source: sourceId,
+        paint: {
+            "raster-opacity": 0.7
+        }
+    }, "study-area-fill");
+
+    activeLayers[layerId] = sourceId;
+}
+
+async function enableVectorLayer(layerId, data) {
+    const sourceId = `layer-${layerId}`;
+    const geojson = await fetch(data.vector_url).then(r => r.json());
+
+    if (map.getSource(sourceId)) {
+        disableVectorLayers(layerId);
+    }
+
+    map.addSource(sourceId, { type: "geojson", data: geojson });
+
+    if (layerId === "mining-rights") {
+        enableMiningRightsLayers(sourceId);
+    } else if (layerId === "mineral-occurrences") {
+        enableOccurrenceLayers(sourceId);
+    } else {
+        // Geology layers (litho, age) — polygons with per-feature color
+        enableGeologyLayers(sourceId);
+    }
+
+    activeLayers[layerId] = sourceId;
+}
+
+function enableMiningRightsLayers(sourceId) {
+    map.addLayer({
+        id: `${sourceId}-other-fill`, type: "fill", source: sourceId,
+        filter: ["==", ["get", "is_aura"], false],
+        paint: { "fill-color": "#888888", "fill-opacity": 0.25 }
+    }, "study-area-fill");
+    map.addLayer({
+        id: `${sourceId}-other-line`, type: "line", source: sourceId,
+        filter: ["==", ["get", "is_aura"], false],
+        paint: { "line-color": "#888888", "line-width": 1.5 }
+    }, "study-area-fill");
+    map.addLayer({
+        id: `${sourceId}-aura-fill`, type: "fill", source: sourceId,
+        filter: ["==", ["get", "is_aura"], true],
+        paint: { "fill-color": "#FFD700", "fill-opacity": 0.35 }
+    }, "study-area-fill");
+    map.addLayer({
+        id: `${sourceId}-aura-line`, type: "line", source: sourceId,
+        filter: ["==", ["get", "is_aura"], true],
+        paint: { "line-color": "#FFD700", "line-width": 2 }
+    }, "study-area-fill");
+
+    addPopup(sourceId, ["-aura-fill", "-other-fill"], (props) => `
+        <div style="color:#1a1a2e;font-size:13px;max-width:260px">
+            <strong>${props.PROCESSO || ""}</strong><br>
+            <b>Titular:</b> ${props.NOME || ""}<br>
+            <b>Fase:</b> ${props.FASE || ""}<br>
+            <b>Substancia:</b> ${props.SUBS || ""}<br>
+            <b>Area:</b> ${props.AREA_HA ? Number(props.AREA_HA).toFixed(1) + " ha" : ""}
+        </div>
+    `);
+}
+
+function enableGeologyLayers(sourceId) {
+    map.addLayer({
+        id: `${sourceId}-fill`, type: "fill", source: sourceId,
+        paint: { "fill-color": ["get", "color"], "fill-opacity": 0.4 }
+    }, "study-area-fill");
+    map.addLayer({
+        id: `${sourceId}-line`, type: "line", source: sourceId,
+        paint: { "line-color": ["get", "color"], "line-width": 1, "line-opacity": 0.8 }
+    }, "study-area-fill");
+
+    addPopup(sourceId, ["-fill"], (props) => `
+        <div style="color:#1a1a2e;font-size:13px;max-width:280px">
+            <strong>${props.sigla || ""}</strong><br>
+            <b>${props.nome || ""}</b><br>
+            <em>${props.litotipos || ""}</em><br>
+            ${props.era_max ? `<b>Idade:</b> ${props.era_max}` : ""}
+        </div>
+    `);
+}
+
+function enableOccurrenceLayers(sourceId) {
+    map.addLayer({
+        id: `${sourceId}-circle`, type: "circle", source: sourceId,
+        paint: {
+            "circle-radius": ["get", "radius"],
+            "circle-color": ["get", "color"],
+            "circle-stroke-color": "#fff",
+            "circle-stroke-width": 1,
+            "circle-opacity": 0.9,
+        }
+    }, "study-area-fill");
+
+    addPopup(sourceId, ["-circle"], (props) => `
+        <div style="color:#1a1a2e;font-size:13px;max-width:260px">
+            <strong>${props.substancias || props.substancia || "?"}</strong><br>
+            ${props.toponimia || ""}<br>
+            ${props.status_economico || ""} — ${props.importancia || ""}
+        </div>
+    `);
+}
+
+function addPopup(sourceId, suffixes, htmlFn) {
+    suffixes.forEach(s => {
+        const lid = sourceId + s;
+        map.on("click", lid, (e) => {
+            if (!e.features || !e.features.length) return;
+            const props = e.features[0].properties;
+            new maplibregl.Popup()
+                .setLngLat(e.lngLat)
+                .setHTML(htmlFn(props))
+                .addTo(map);
+        });
+        map.on("mouseenter", lid, () => { map.getCanvas().style.cursor = "pointer"; });
+        map.on("mouseleave", lid, () => { map.getCanvas().style.cursor = ""; });
+    });
+}
+
+function disableVectorLayers(layerId) {
+    const sourceId = `layer-${layerId}`;
+    const suffixes = ["-fill", "-line", "-circle", "-aura-fill", "-aura-line", "-other-fill", "-other-line"];
+    suffixes.forEach(s => {
+        if (map.getLayer(sourceId + s)) map.removeLayer(sourceId + s);
+    });
+    if (map.getSource(sourceId)) map.removeSource(sourceId);
+}
+
 function disableLayer(layerId) {
     const sourceId = `layer-${layerId}`;
-    if (map.getLayer(sourceId)) {
-        map.removeLayer(sourceId);
-    }
-    if (map.getSource(sourceId)) {
-        map.removeSource(sourceId);
+    const layer = layersData.find(l => l.id === layerId);
+
+    if (layer && layer.type === "vector") {
+        disableVectorLayers(layerId);
+    } else {
+        if (map.getLayer(sourceId)) map.removeLayer(sourceId);
+        if (map.getSource(sourceId)) map.removeSource(sourceId);
     }
     delete activeLayers[layerId];
 
@@ -393,10 +541,16 @@ async function openPropertiesPanel(layerId) {
 
     const layer = layersData.find(l => l.id === layerId);
     const supportsColormap = layer && layer.supports_colormap;
+    const isVector = layer && layer.type === "vector";
 
     document.getElementById("props-layer-name").textContent = layer ? layer.name : layerId;
     document.getElementById("props-content").style.display = "block";
     document.getElementById("props-empty").style.display = "none";
+
+    // Esconder controles raster-only para layers vetoriais
+    ["prop-brightness", "prop-contrast", "prop-saturation"].forEach(id => {
+        document.getElementById(id).closest(".prop-group").style.display = isVector ? "none" : "";
+    });
 
     if (supportsColormap && !layerStats[layerId]) {
         try {
@@ -460,6 +614,25 @@ function applyMapLibreProps(layerId) {
     }
 
     const sourceId = `layer-${layerId}`;
+    const layer = layersData.find(l => l.id === layerId);
+
+    if (layer && layer.type === "vector") {
+        const opacity = p.opacity / 100;
+        ["-fill", "-aura-fill", "-other-fill"].forEach(s => {
+            if (map.getLayer(sourceId + s))
+                map.setPaintProperty(sourceId + s, "fill-opacity", 0.4 * opacity);
+        });
+        ["-line", "-aura-line", "-other-line"].forEach(s => {
+            if (map.getLayer(sourceId + s))
+                map.setPaintProperty(sourceId + s, "line-opacity", opacity);
+        });
+        ["-circle"].forEach(s => {
+            if (map.getLayer(sourceId + s))
+                map.setPaintProperty(sourceId + s, "circle-opacity", opacity);
+        });
+        return;
+    }
+
     if (!map.getLayer(sourceId)) return;
 
     map.setPaintProperty(sourceId, "raster-opacity", p.opacity / 100);

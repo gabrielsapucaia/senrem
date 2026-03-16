@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 
 from backend.config import settings
 from backend.services.gee import GEEService, LAYER_CONFIGS as GEE_LAYER_CONFIGS
+from backend.services.vectors import VectorService
 
 router = APIRouter(prefix="/api")
 
@@ -13,6 +14,8 @@ try:
 except Exception as e:
     print(f"AVISO: GEE nao inicializou: {e}")
     gee_service = None
+
+vector_service = VectorService()
 
 _generated_tiles = {}
 _preload_status = {"running": False, "done": 0, "total": 0}
@@ -44,6 +47,16 @@ LOCAL_LAYER_CONFIGS = {
     },
 }
 
+GEOPHYSICS_CONFIGS = {
+    "mag-anomaly": {"name": "Campo Magnetico", "description": "Campo magnetico anomalo interpolado (Projeto 1073)"},
+    "mag-1dv": {"name": "1a Derivada Vertical", "description": "1a derivada vertical do campo magnetico (FFT)"},
+    "mag-asa": {"name": "Sinal Analitico", "description": "Amplitude do sinal analitico magnetico (FFT)"},
+    "gamma-k": {"name": "Potassio (K%)", "description": "Potassio percentual — gamaespectrometria"},
+    "gamma-th": {"name": "Torio (eTh)", "description": "Torio equivalente (ppm) — gamaespectrometria"},
+    "gamma-thk": {"name": "Razao Th/K", "description": "Razao Th/K — indicador de alteracao hidrotermal"},
+    "gamma-ternary": {"name": "Ternario K-Th-U", "description": "Composicao RGB: R=K, G=Th, B=U"},
+}
+
 LAYERS = [
     # Sentinel-2
     {"id": "rgb-true", "name": "RGB Verdadeira", "category": "spectral", "source": "gee", "group": "Sentinel-2"},
@@ -70,9 +83,18 @@ LAYERS = [
     {"id": "dem", "name": "DEM / Hillshade", "category": "terrain", "source": "gee", "group": "Terreno"},
     {"id": "lineaments", "name": "Lineamentos", "category": "terrain", "source": "local", "group": "Terreno"},
     # CPRM
-    {"id": "geology", "name": "Geologia (CPRM)", "category": "cprm", "source": "cprm", "group": "CPRM"},
-    {"id": "magnetic", "name": "Magnetico", "category": "cprm", "source": "cprm", "group": "CPRM"},
-    {"id": "gamma", "name": "Gamaespectrometrico", "category": "cprm", "source": "cprm", "group": "CPRM"},
+    {"id": "mining-rights", "name": "Direitos Minerarios (ANM)", "category": "cprm", "source": "vector", "group": "CPRM"},
+    {"id": "geology-litho", "name": "Geologia (Litologia)", "category": "cprm", "source": "vector", "group": "CPRM"},
+    {"id": "geology-age", "name": "Geologia (Idade)", "category": "cprm", "source": "vector", "group": "CPRM"},
+    {"id": "mineral-occurrences", "name": "Ocorrencias Minerais", "category": "cprm", "source": "vector", "group": "CPRM"},
+    # Geofisica
+    {"id": "mag-anomaly", "name": "Campo Magnetico", "category": "geophysics", "source": "local", "group": "Geofisica"},
+    {"id": "mag-1dv", "name": "1a Derivada Vertical", "category": "geophysics", "source": "local", "group": "Geofisica"},
+    {"id": "mag-asa", "name": "Sinal Analitico", "category": "geophysics", "source": "local", "group": "Geofisica"},
+    {"id": "gamma-k", "name": "Potassio (K%)", "category": "geophysics", "source": "local", "group": "Geofisica"},
+    {"id": "gamma-th", "name": "Torio (eTh)", "category": "geophysics", "source": "local", "group": "Geofisica"},
+    {"id": "gamma-thk", "name": "Razao Th/K", "category": "geophysics", "source": "local", "group": "Geofisica"},
+    {"id": "gamma-ternary", "name": "Ternario K-Th-U", "category": "geophysics", "source": "local", "group": "Geofisica"},
     # Prospectividade
     {"id": "targets", "name": "Alvos", "category": "prospectivity", "source": "model", "group": "Prospectividade"},
 ]
@@ -121,11 +143,20 @@ def list_layers():
             available = layer["id"] in _generated_tiles or _check_local_available(layer["id"], processed_dir)
             can_generate = has_earthdata or available
             supports_colormap = True
+        elif layer["source"] == "local" and layer["id"] in GEOPHYSICS_CONFIGS:
+            available = layer["id"] in _generated_tiles or _check_local_available(layer["id"], processed_dir)
+            can_generate = True
+            supports_colormap = layer["id"] != "gamma-ternary"
+        elif layer["source"] == "vector":
+            available = vector_service.is_available(layer["id"])
+            can_generate = True
+            supports_colormap = False
         else:
             available = False
             can_generate = False
             supports_colormap = False
-        result.append({**layer, "available": available, "can_generate": can_generate, "supports_colormap": supports_colormap})
+        layer_type = "vector" if layer["source"] == "vector" else "raster"
+        result.append({**layer, "available": available, "can_generate": can_generate, "supports_colormap": supports_colormap, "type": layer_type})
     return {"layers": result, "loading": loading,
             "loaded": _preload_status["done"], "total": _preload_status["total"]}
 
@@ -187,6 +218,39 @@ def generate_layer(layer_id: str):
         }
         _generated_tiles[layer_id] = result
         return result
+
+    # Layer geofisica
+    if layer_id in GEOPHYSICS_CONFIGS:
+        processed_dir = os.path.join(settings.data_dir, "rasters", "processed")
+        cog_path = os.path.join(processed_dir, f"{layer_id}.tif")
+        config = GEOPHYSICS_CONFIGS[layer_id]
+        if not os.path.exists(cog_path):
+            raise HTTPException(status_code=400, detail="COG geofisico nao encontrado. Processe os dados XYZ primeiro.")
+        from backend.main import tile_service
+        is_rgb = layer_id == "gamma-ternary"
+        tile_service.register_cog(layer_id, cog_path, is_rgb=is_rgb)
+        tile_url = f"/api/tiles/{layer_id}/{{z}}/{{x}}/{{y}}.png"
+        result = {"layer_id": layer_id, "name": config["name"], "description": config["description"], "tile_url": tile_url}
+        _generated_tiles[layer_id] = result
+        return result
+
+    # Layer vetorial
+    layer_def = next((l for l in LAYERS if l["id"] == layer_id and l["source"] == "vector"), None)
+    if layer_def:
+        try:
+            geojson = vector_service.get_geojson(layer_id)
+            if not geojson:
+                geojson = vector_service.generate(layer_id)
+            result = {
+                "layer_id": layer_id,
+                "name": layer_def["name"],
+                "type": "vector",
+                "vector_url": f"/api/vectors/{layer_id}.geojson",
+            }
+            _generated_tiles[layer_id] = result
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     raise HTTPException(status_code=404, detail=f"Layer '{layer_id}' nao disponivel para geracao")
 
@@ -307,7 +371,24 @@ def preload_layers(tile_service):
                 print(f"  AVISO: COG corrompido {layer_id}: {e}")
                 os.remove(cog_path)
 
-    # 3. Se houver COGs GEE faltantes, apenas logar (nao baixa automaticamente)
+    # 3. Registrar COGs geofisicos
+    for layer_id, config in GEOPHYSICS_CONFIGS.items():
+        cog_path = os.path.join(processed_dir, f"{layer_id}.tif")
+        if os.path.exists(cog_path) and os.path.getsize(cog_path) > 0:
+            try:
+                is_rgb = layer_id == "gamma-ternary"
+                tile_service.register_cog(layer_id, cog_path, is_rgb=is_rgb)
+                _generated_tiles[layer_id] = {
+                    "layer_id": layer_id,
+                    "name": config["name"],
+                    "description": config["description"],
+                    "tile_url": f"/api/tiles/{layer_id}/{{z}}/{{x}}/{{y}}.png",
+                }
+                print(f"  Geofisica registrada: {layer_id}")
+            except Exception as e:
+                print(f"  AVISO: COG geofisico corrompido {layer_id}: {e}")
+
+    # 4. Se houver COGs GEE faltantes, apenas logar (nao baixa automaticamente)
     missing = [lid for lid in GEE_LAYER_CONFIGS if lid not in _generated_tiles]
     if missing:
         print(f"  {len(missing)} layers GEE sem COG: {', '.join(missing)}")
