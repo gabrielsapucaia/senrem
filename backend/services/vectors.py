@@ -13,6 +13,8 @@ ANM_BASE_URL = "https://app.anm.gov.br/dadosabertos/SIGMINE/PROCESSOS_MINERARIOS
 # Campos a manter no GeoJSON final
 KEEP_FIELDS = ["PROCESSO", "NOME", "FASE", "SUBS", "AREA_HA", "UF"]
 
+FASES_CAINDO = ["APTO PARA DISPONIBILIDADE", "DISPONIBILIDADE"]
+
 
 class VectorService:
     def __init__(self):
@@ -94,6 +96,36 @@ class VectorService:
         print(f"Direitos minerarios: {len(geojson['features'])} poligonos na area de estudo")
         return geojson
 
+    def process_mining_available(self) -> dict:
+        """Processa processos minerarios caindo (Apto p/ Disponib. + Disponibilidade) em todo o TO."""
+        shp_path = self._find_shapefile()
+        gdf = gpd.read_file(shp_path)
+
+        if gdf.crs and gdf.crs.to_epsg() != 4326:
+            gdf = gdf.to_crs("EPSG:4326")
+
+        gdf = gdf[gdf["FASE"].isin(FASES_CAINDO)].copy()
+
+        if gdf.empty:
+            return {"type": "FeatureCollection", "features": []}
+
+        gdf["is_ouro"] = gdf["SUBS"].str.contains("OURO|GOLD", case=False, na=False)
+
+        keep = [c for c in KEEP_FIELDS if c in gdf.columns] + ["is_ouro", "geometry"]
+        gdf = gdf[keep]
+
+        geojson = json.loads(gdf.to_json())
+
+        geojson_path = self._geojson_path("mining-available")
+        os.makedirs(os.path.dirname(geojson_path), exist_ok=True)
+        with open(geojson_path, "w") as f:
+            json.dump(geojson, f)
+
+        self._cache["mining-available"] = geojson
+        n_ouro = sum(1 for f in geojson["features"] if f["properties"].get("is_ouro"))
+        print(f"Processos caindo: {len(geojson['features'])} total, {n_ouro} com ouro")
+        return geojson
+
     def get_geojson(self, layer_id: str) -> dict:
         """Retorna GeoJSON cacheado ou do disco."""
         if layer_id in self._cache:
@@ -116,6 +148,10 @@ class VectorService:
         if layer_id == "mining-rights":
             self.download_mining_rights()
             return self.process_mining_rights()
+        if layer_id == "mining-available":
+            if not os.path.exists(os.path.join(self._anm_dir(), "TO.zip")):
+                self.download_mining_rights()
+            return self.process_mining_available()
         if layer_id in ("geology-litho", "geology-age", "mineral-occurrences"):
             return self._generate_cprm(layer_id)
         raise ValueError(f"Layer vetorial desconhecida: {layer_id}")

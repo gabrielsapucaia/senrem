@@ -84,6 +84,7 @@ LAYERS = [
     {"id": "lineaments", "name": "Lineamentos", "category": "terrain", "source": "local", "group": "Terreno"},
     # CPRM
     {"id": "mining-rights", "name": "Direitos Minerarios (ANM)", "category": "cprm", "source": "vector", "group": "CPRM"},
+    {"id": "mining-available", "name": "Processos Caindo (TO)", "category": "cprm", "source": "vector", "group": "CPRM"},
     {"id": "geology-litho", "name": "Geologia (Litologia)", "category": "cprm", "source": "vector", "group": "CPRM"},
     {"id": "geology-age", "name": "Geologia (Idade)", "category": "cprm", "source": "vector", "group": "CPRM"},
     {"id": "mineral-occurrences", "name": "Ocorrencias Minerais", "category": "cprm", "source": "vector", "group": "CPRM"},

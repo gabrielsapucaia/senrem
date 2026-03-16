@@ -2,11 +2,11 @@ import os
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend.api.config_routes import router as config_router
-from backend.api.layers import preload_layers, router as layers_router
+from backend.api.layers import preload_layers, vector_service, router as layers_router
 from backend.config import settings
 from backend.services.tiles import TileService
 
@@ -50,6 +50,14 @@ def get_tile_stats(layer_id: str):
         raise HTTPException(status_code=404, detail=f"Stats nao encontradas para '{layer_id}'")
     p2, p98 = tile_service._stats[layer_id]
     return {"p2": p2, "p98": p98}
+
+
+@app.get("/api/vectors/{layer_id}.geojson")
+def get_vector_geojson(layer_id: str):
+    geojson = vector_service.get_geojson(layer_id)
+    if not geojson:
+        raise HTTPException(status_code=404, detail=f"GeoJSON nao encontrado para '{layer_id}'")
+    return JSONResponse(content=geojson)
 
 
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")

@@ -246,6 +246,22 @@ async function refreshLayersList() {
         item.appendChild(label);
         list.appendChild(item);
 
+        if (layer.id === "mining-available") {
+            const legend = document.createElement("div");
+            legend.className = "vector-legend";
+            legend.id = `legend-${layer.id}`;
+            legend.style.display = "none";
+            legend.innerHTML = `
+                <span class="legend-item"><span class="legend-swatch" style="background:#FF4444;border-color:#FF4444"></span>Ouro</span>
+                <span class="legend-item"><span class="legend-swatch" style="background:#8B8B8B;border-color:#8B8B8B"></span>Outros</span>
+            `;
+            list.appendChild(legend);
+
+            checkbox.addEventListener("change", () => {
+                legend.style.display = checkbox.checked ? "flex" : "none";
+            });
+        }
+
         if (layer.id === "mining-rights") {
             const legend = document.createElement("div");
             legend.className = "vector-legend";
@@ -348,6 +364,8 @@ async function enableVectorLayer(layerId, data) {
 
     if (layerId === "mining-rights") {
         enableMiningRightsLayers(sourceId);
+    } else if (layerId === "mining-available") {
+        enableMiningAvailableLayers(sourceId);
     } else if (layerId === "mineral-occurrences") {
         enableOccurrenceLayers(sourceId);
     } else {
@@ -382,6 +400,41 @@ function enableMiningRightsLayers(sourceId) {
 
     addPopup(sourceId, ["-aura-fill", "-other-fill"], (props) => `
         <div style="color:#1a1a2e;font-size:13px;max-width:260px">
+            <strong>${props.PROCESSO || ""}</strong><br>
+            <b>Titular:</b> ${props.NOME || ""}<br>
+            <b>Fase:</b> ${props.FASE || ""}<br>
+            <b>Substancia:</b> ${props.SUBS || ""}<br>
+            <b>Area:</b> ${props.AREA_HA ? Number(props.AREA_HA).toFixed(1) + " ha" : ""}
+        </div>
+    `);
+}
+
+function enableMiningAvailableLayers(sourceId) {
+    // Outros minerais — cinza claro
+    map.addLayer({
+        id: `${sourceId}-other-fill`, type: "fill", source: sourceId,
+        filter: ["==", ["get", "is_ouro"], false],
+        paint: { "fill-color": "#8B8B8B", "fill-opacity": 0.2 }
+    }, "study-area-fill");
+    map.addLayer({
+        id: `${sourceId}-other-line`, type: "line", source: sourceId,
+        filter: ["==", ["get", "is_ouro"], false],
+        paint: { "line-color": "#8B8B8B", "line-width": 1, "line-dasharray": [2, 1] }
+    }, "study-area-fill");
+    // Ouro — vermelho/coral
+    map.addLayer({
+        id: `${sourceId}-aura-fill`, type: "fill", source: sourceId,
+        filter: ["==", ["get", "is_ouro"], true],
+        paint: { "fill-color": "#FF4444", "fill-opacity": 0.3 }
+    }, "study-area-fill");
+    map.addLayer({
+        id: `${sourceId}-aura-line`, type: "line", source: sourceId,
+        filter: ["==", ["get", "is_ouro"], true],
+        paint: { "line-color": "#FF4444", "line-width": 2 }
+    }, "study-area-fill");
+
+    addPopup(sourceId, ["-aura-fill", "-other-fill"], (props) => `
+        <div style="color:#1a1a2e;font-size:13px;max-width:280px">
             <strong>${props.PROCESSO || ""}</strong><br>
             <b>Titular:</b> ${props.NOME || ""}<br>
             <b>Fase:</b> ${props.FASE || ""}<br>
