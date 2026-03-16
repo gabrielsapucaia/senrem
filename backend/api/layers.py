@@ -290,18 +290,22 @@ def preload_layers(tile_service):
     # 2. Registrar COGs GEE existentes no disco (instantaneo)
     for layer_id in GEE_LAYER_CONFIGS:
         cog_path = os.path.join(processed_dir, f"{layer_id}.tif")
-        if os.path.exists(cog_path):
-            is_rgb = gee_service.is_rgb_layer(layer_id) if gee_service else False
-            default_range = gee_service.get_rgb_range(layer_id) if (gee_service and is_rgb) else None
-            tile_service.register_cog(layer_id, cog_path, is_rgb=is_rgb, default_range=default_range)
-            config = GEE_LAYER_CONFIGS[layer_id]
-            _generated_tiles[layer_id] = {
-                "layer_id": layer_id,
-                "name": config["name"],
-                "description": config["description"],
-                "tile_url": f"/api/tiles/{layer_id}/{{z}}/{{x}}/{{y}}.png",
-            }
-            print(f"  GEE COG registrada: {layer_id}")
+        if os.path.exists(cog_path) and os.path.getsize(cog_path) > 0:
+            try:
+                is_rgb = gee_service.is_rgb_layer(layer_id) if gee_service else False
+                default_range = gee_service.get_rgb_range(layer_id) if (gee_service and is_rgb) else None
+                tile_service.register_cog(layer_id, cog_path, is_rgb=is_rgb, default_range=default_range)
+                config = GEE_LAYER_CONFIGS[layer_id]
+                _generated_tiles[layer_id] = {
+                    "layer_id": layer_id,
+                    "name": config["name"],
+                    "description": config["description"],
+                    "tile_url": f"/api/tiles/{layer_id}/{{z}}/{{x}}/{{y}}.png",
+                }
+                print(f"  GEE COG registrada: {layer_id}")
+            except Exception as e:
+                print(f"  AVISO: COG corrompido {layer_id}: {e}")
+                os.remove(cog_path)
 
     # 3. Se houver COGs GEE faltantes, apenas logar (nao baixa automaticamente)
     missing = [lid for lid in GEE_LAYER_CONFIGS if lid not in _generated_tiles]
