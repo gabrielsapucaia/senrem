@@ -281,11 +281,6 @@ function stopPolling() {
         clearInterval(pollInterval);
         pollInterval = null;
     }
-    const btn = document.querySelector(".refresh-btn");
-    if (btn) {
-        btn.disabled = false;
-        btn.textContent = "Atualizar Layers";
-    }
 }
 
 async function enableLayer(layerId, checkbox) {
