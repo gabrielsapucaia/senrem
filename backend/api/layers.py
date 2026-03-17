@@ -1,5 +1,4 @@
 import os
-import threading
 
 from fastapi import APIRouter, HTTPException
 
@@ -258,84 +257,6 @@ def generate_layer(layer_id: str):
             raise HTTPException(status_code=500, detail=str(e))
 
     raise HTTPException(status_code=404, detail=f"Layer '{layer_id}' nao disponivel para geracao")
-
-
-@router.post("/layers/refresh")
-def refresh_layers():
-    """Apaga COGs GEE e re-baixa do zero."""
-    if _preload_status["running"]:
-        return {"status": "already_running", "loaded": _preload_status["done"], "total": _preload_status["total"]}
-
-    # Apagar COGs GEE do disco
-    for layer_id in list(_generated_tiles.keys()):
-        if layer_id in GEE_LAYER_CONFIGS:
-            cog_path = _get_gee_cog_path(layer_id)
-            if os.path.exists(cog_path):
-                os.remove(cog_path)
-            del _generated_tiles[layer_id]
-
-    if not gee_service:
-        return {"status": "error", "detail": "GEE nao disponivel"}
-    _start_gee_download()
-    return {"status": "started", "total": _preload_status["total"]}
-
-
-def _start_gee_download():
-    """Inicia download paralelo de COGs GEE em background.
-
-    Baixa ate 3 layers simultaneamente. Cada layer com grid
-    tambem usa paralelismo interno (4 threads por grid).
-    """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    gee_ids = [lid for lid in GEE_LAYER_CONFIGS if lid not in _generated_tiles]
-    if not gee_ids:
-        print("Todas as layers GEE ja tem COGs no disco.")
-        return
-
-    _preload_status["total"] = len(gee_ids)
-    _preload_status["done"] = 0
-    _preload_status["running"] = True
-
-    def _download_one(layer_id):
-        cog_path = _get_gee_cog_path(layer_id)
-        print(f"  Baixando GEE: {layer_id}...")
-        gee_service.download_layer_cog(layer_id, cog_path)
-        _register_gee_cog(layer_id, cog_path)
-        _preload_status["done"] += 1
-        print(f"  GEE downloaded: {layer_id} ({_preload_status['done']}/{_preload_status['total']})")
-
-    def _download_all():
-        # Layers simples (sem grid) em paralelo: ate 3 simultaneas
-        # Layers com grid: 1 por vez (ja usam 4 threads internamente)
-        simple = [lid for lid in gee_ids if gee_service._get_download_config(lid)[1] == 1]
-        grid = [lid for lid in gee_ids if gee_service._get_download_config(lid)[1] > 1]
-
-        # Baixar layers simples em paralelo (rapidas, ~10-30s cada)
-        if simple:
-            with ThreadPoolExecutor(max_workers=3) as executor:
-                futures = {executor.submit(_download_one, lid): lid for lid in simple}
-                for future in as_completed(futures):
-                    lid = futures[future]
-                    try:
-                        future.result()
-                    except Exception as e:
-                        _preload_status["done"] += 1
-                        print(f"  AVISO: Falha ao baixar {lid}: {e}")
-
-        # Baixar layers com grid (pesadas, ja paralelas internamente)
-        for layer_id in grid:
-            try:
-                _download_one(layer_id)
-            except Exception as e:
-                _preload_status["done"] += 1
-                print(f"  AVISO: Falha ao baixar {layer_id}: {e}")
-
-        _preload_status["running"] = False
-        print("Download GEE completo!")
-
-    thread = threading.Thread(target=_download_all, daemon=True)
-    thread.start()
 
 
 def preload_layers(tile_service):

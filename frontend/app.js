@@ -133,17 +133,6 @@ async function refreshLayersList() {
     layersData = layers;
     let currentGroup = null;
 
-    const refreshBtn = document.createElement("button");
-    refreshBtn.className = "refresh-btn";
-    refreshBtn.textContent = "Atualizar Layers";
-    refreshBtn.onclick = async () => {
-        refreshBtn.disabled = true;
-        refreshBtn.textContent = "Atualizando...";
-        await fetch("/api/layers/refresh", { method: "POST" });
-        startPolling();
-    };
-    list.appendChild(refreshBtn);
-
     // Botoes selecionar/deselecionar todos
     const toggleDiv = document.createElement("div");
     toggleDiv.className = "toggle-all";
