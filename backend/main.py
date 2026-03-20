@@ -1,7 +1,7 @@
 import os
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Request
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -58,28 +58,6 @@ def get_vector_geojson(layer_id: str):
     if not geojson:
         raise HTTPException(status_code=404, detail=f"GeoJSON nao encontrado para '{layer_id}'")
     return JSONResponse(content=geojson)
-
-
-@app.post("/api/upload/{layer_id}")
-async def upload_cog(layer_id: str, file: UploadFile = File(...)):
-    processed_dir = os.path.join(settings.data_dir, "rasters", "processed")
-    os.makedirs(processed_dir, exist_ok=True)
-    cog_path = os.path.join(processed_dir, f"{layer_id}.tif")
-    content = await file.read()
-    with open(cog_path, "wb") as f:
-        f.write(content)
-    preload_layers(tile_service)
-    return {"status": "ok", "layer_id": layer_id, "size": len(content)}
-
-
-@app.post("/api/vectors/{layer_id}/upload")
-async def upload_vector(layer_id: str, request: Request):
-    vectors_dir = os.path.join(settings.data_dir, "vectors")
-    os.makedirs(vectors_dir, exist_ok=True)
-    body = await request.body()
-    with open(os.path.join(vectors_dir, f"{layer_id}.geojson"), "wb") as f:
-        f.write(body)
-    return {"status": "ok", "layer_id": layer_id, "size": len(body)}
 
 
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
