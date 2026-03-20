@@ -20,4 +20,4 @@ EXPOSE 7860
 
 ENV PORT=7860
 
-CMD ["python", "-m", "backend.main"]
+CMD python -m backend.main

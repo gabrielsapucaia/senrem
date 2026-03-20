@@ -90,4 +90,5 @@ if __name__ == "__main__":
 
     from backend.config import settings
 
-    uvicorn.run("backend.main:app", host=settings.host, port=settings.port, reload=True)
+    is_dev = os.environ.get("RAILWAY_ENVIRONMENT") is None and os.environ.get("SPACE_ID") is None
+    uvicorn.run("backend.main:app", host=settings.host, port=settings.port, reload=is_dev)
