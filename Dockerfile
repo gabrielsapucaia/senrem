@@ -16,6 +16,8 @@ COPY frontend/ frontend/
 # Create data directories (volume mounts here in production)
 RUN mkdir -p data/rasters/processed data/tiles data/vectors
 
-EXPOSE 8000
+EXPOSE 7860
+
+ENV PORT=7860
 
 CMD ["python", "-m", "backend.main"]
