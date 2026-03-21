@@ -21,15 +21,25 @@ let pollInterval = null;
 let selectedLayerId = null;
 let layerProps = {};
 let layerStats = {};
+let currentAreaId = "paiol";
+let allAreas = {};
+let areaMarkers = [];
+
+// Layers vetoriais globais (servidas sem area_id)
+const GLOBAL_VECTOR_LAYERS = new Set(["mining-rights", "mining-available"]);
 
 async function init() {
     const config = await fetch("/api/config").then(r => r.json());
     studyArea = config;
+    allAreas = config.areas;
+    currentAreaId = config.default_area || "paiol";
+
+    const currentArea = allAreas[currentAreaId];
 
     map = new maplibregl.Map({
         container: "map",
         style: BASEMAP_STYLE,
-        center: [config.center.lon, config.center.lat],
+        center: [currentArea.center.lon, currentArea.center.lat],
         zoom: 11
     });
 
@@ -37,7 +47,7 @@ async function init() {
     map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
 
     map.on("load", () => {
-        addStudyAreaCircle(config);
+        addAllAreaSquares();
         updateStatus("Pronto");
     });
 
@@ -47,67 +57,132 @@ async function init() {
             `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`;
     });
 
+    setupAreaSelector();
     setupPropertiesPanel();
     await refreshLayersList();
 }
 
-function addStudyAreaCircle(config) {
-    const center = [config.center.lon, config.center.lat];
-    const radiusKm = config.radius_km;
-    const points = 64;
-    const coords = [];
+function setupAreaSelector() {
+    const container = document.getElementById("area-selector-container");
+    if (!container) return;
 
-    for (let i = 0; i <= points; i++) {
-        const angle = (i / points) * 2 * Math.PI;
-        const dx = radiusKm * Math.cos(angle);
-        const dy = radiusKm * Math.sin(angle);
-        const lat = center[1] + (dy / 111.32);
-        const lon = center[0] + (dx / (111.32 * Math.cos(center[1] * Math.PI / 180)));
-        coords.push([lon, lat]);
-    }
+    const select = document.createElement("select");
+    select.id = "area-selector";
+    select.className = "area-selector";
 
-    map.addSource("study-area", {
-        type: "geojson",
-        data: {
-            type: "Feature",
-            geometry: { type: "Polygon", coordinates: [coords] }
-        }
+    Object.entries(allAreas).forEach(([id, area]) => {
+        const opt = document.createElement("option");
+        opt.value = id;
+        opt.textContent = area.name;
+        select.appendChild(opt);
+    });
+    select.value = currentAreaId;
+
+    select.addEventListener("change", async () => {
+        // Desativar todas as layers ativas
+        Object.keys(activeLayers).forEach(lid => {
+            const cb = document.getElementById(`layer-${lid}`);
+            if (cb) cb.checked = false;
+            disableLayer(lid);
+        });
+
+        currentAreaId = select.value;
+        const area = allAreas[currentAreaId];
+
+        // Zoom para a nova area
+        map.flyTo({ center: [area.center.lon, area.center.lat], zoom: 11 });
+
+        // Atualizar cores dos quadrados e markers
+        updateAreaHighlights();
+
+        // Resetar a lista de layers (rebuild completo)
+        layerStats = {};
+        const list = document.getElementById("layers-list");
+        list.innerHTML = "";
+        await refreshLayersList();
     });
 
-    map.addLayer({
-        id: "study-area-fill",
-        type: "fill",
-        source: "study-area",
-        paint: {
-            "fill-color": "#e94560",
-            "fill-opacity": 0.05
-        }
-    });
+    container.appendChild(select);
+}
 
-    map.addLayer({
-        id: "study-area-outline",
-        type: "line",
-        source: "study-area",
-        paint: {
-            "line-color": "#e94560",
-            "line-width": 2,
-            "line-dasharray": [3, 2]
-        }
-    });
+function addAllAreaSquares() {
+    // Limpar markers antigos
+    areaMarkers.forEach(m => m.remove());
+    areaMarkers = [];
 
-    new maplibregl.Marker({ color: "#e94560" })
-        .setLngLat(center)
-        .setPopup(new maplibregl.Popup().setHTML(
-            `<strong>${config.name}</strong><br>` +
-            `${config.center.lat}, ${config.center.lon}<br>` +
-            `Raio: ${config.radius_km} km`
-        ))
-        .addTo(map);
+    Object.entries(allAreas).forEach(([id, area]) => {
+        const center = [area.center.lon, area.center.lat];
+        const radiusKm = area.radius_km;
+        const isSelected = id === currentAreaId;
+
+        const dLat = radiusKm / 111.32;
+        const dLon = radiusKm / (111.32 * Math.cos(center[1] * Math.PI / 180));
+        const coords = [
+            [center[0] - dLon, center[1] - dLat],
+            [center[0] + dLon, center[1] - dLat],
+            [center[0] + dLon, center[1] + dLat],
+            [center[0] - dLon, center[1] + dLat],
+            [center[0] - dLon, center[1] - dLat],
+        ];
+
+        const sourceId = `study-area-${id}`;
+
+        if (map.getSource(sourceId)) {
+            map.removeLayer(`${sourceId}-fill`);
+            map.removeLayer(`${sourceId}-outline`);
+            map.removeSource(sourceId);
+        }
+
+        map.addSource(sourceId, {
+            type: "geojson",
+            data: {
+                type: "Feature",
+                geometry: { type: "Polygon", coordinates: [coords] }
+            }
+        });
+
+        map.addLayer({
+            id: `${sourceId}-fill`,
+            type: "fill",
+            source: sourceId,
+            paint: {
+                "fill-color": isSelected ? "#e94560" : "#ffd700",
+                "fill-opacity": isSelected ? 0.05 : 0.03
+            }
+        });
+
+        map.addLayer({
+            id: `${sourceId}-outline`,
+            type: "line",
+            source: sourceId,
+            paint: {
+                "line-color": isSelected ? "#e94560" : "#ffd700",
+                "line-width": isSelected ? 2 : 1.5,
+                "line-dasharray": [3, 2],
+                "line-opacity": isSelected ? 1 : 0.5
+            }
+        });
+
+        const marker = new maplibregl.Marker({ color: isSelected ? "#e94560" : "#ffd700" })
+            .setLngLat(center)
+            .setPopup(new maplibregl.Popup().setHTML(
+                `<strong>${area.name}</strong><br>` +
+                `${area.center.lat.toFixed(5)}, ${area.center.lon.toFixed(5)}<br>` +
+                `Raio: ${area.radius_km} km`
+            ))
+            .addTo(map);
+        areaMarkers.push(marker);
+    });
+}
+
+function updateAreaHighlights() {
+    // Remover e recriar os quadrados/markers com novas cores
+    addAllAreaSquares();
 }
 
 async function refreshLayersList() {
     const list = document.getElementById("layers-list");
-    const resp = await fetch("/api/layers").then(r => r.json());
+    const resp = await fetch(`/api/areas/${currentAreaId}/layers`).then(r => r.json());
     const layers = resp.layers;
     const isLoading = resp.loading;
 
@@ -286,7 +361,7 @@ function stopPolling() {
 async function enableLayer(layerId, checkbox) {
     updateStatus(`Gerando ${layerId}...`);
     try {
-        const data = await fetch(`/api/layers/${layerId}/generate`, { method: "POST" })
+        const data = await fetch(`/api/areas/${currentAreaId}/layers/${layerId}/generate`, { method: "POST" })
             .then(r => {
                 if (!r.ok) throw new Error(`Erro ${r.status}`);
                 return r.json();
@@ -324,6 +399,9 @@ function enableRasterLayer(layerId, data) {
         tileSize: 256
     });
 
+    // Encontrar a primeira layer study-area para inserir abaixo
+    const beforeLayer = _findStudyAreaLayer();
+
     map.addLayer({
         id: sourceId,
         type: "raster",
@@ -331,9 +409,18 @@ function enableRasterLayer(layerId, data) {
         paint: {
             "raster-opacity": 0.7
         }
-    }, "study-area-fill");
+    }, beforeLayer);
 
     activeLayers[layerId] = sourceId;
+}
+
+function _findStudyAreaLayer() {
+    // Retorna o ID da primeira layer study-area-fill para inserir antes
+    for (const areaId of Object.keys(allAreas)) {
+        const fillId = `study-area-${areaId}-fill`;
+        if (map.getLayer(fillId)) return fillId;
+    }
+    return undefined;
 }
 
 async function enableVectorLayer(layerId, data) {
@@ -346,41 +433,43 @@ async function enableVectorLayer(layerId, data) {
 
     map.addSource(sourceId, { type: "geojson", data: geojson });
 
+    const beforeLayer = _findStudyAreaLayer();
+
     if (layerId === "mining-rights") {
-        enableMiningRightsLayers(sourceId);
+        enableMiningRightsLayers(sourceId, beforeLayer);
     } else if (layerId === "mining-available") {
-        enableMiningAvailableLayers(sourceId);
+        enableMiningAvailableLayers(sourceId, beforeLayer);
     } else if (layerId === "mineral-occurrences") {
-        enableOccurrenceLayers(sourceId);
+        enableOccurrenceLayers(sourceId, beforeLayer);
     } else {
         // Geology layers (litho, age) — polygons with per-feature color
-        enableGeologyLayers(sourceId);
+        enableGeologyLayers(sourceId, beforeLayer);
     }
 
     activeLayers[layerId] = sourceId;
 }
 
-function enableMiningRightsLayers(sourceId) {
+function enableMiningRightsLayers(sourceId, beforeLayer) {
     map.addLayer({
         id: `${sourceId}-other-fill`, type: "fill", source: sourceId,
         filter: ["==", ["get", "is_aura"], false],
         paint: { "fill-color": "#888888", "fill-opacity": 0.25 }
-    }, "study-area-fill");
+    }, beforeLayer);
     map.addLayer({
         id: `${sourceId}-other-line`, type: "line", source: sourceId,
         filter: ["==", ["get", "is_aura"], false],
         paint: { "line-color": "#888888", "line-width": 1.5 }
-    }, "study-area-fill");
+    }, beforeLayer);
     map.addLayer({
         id: `${sourceId}-aura-fill`, type: "fill", source: sourceId,
         filter: ["==", ["get", "is_aura"], true],
         paint: { "fill-color": "#FFD700", "fill-opacity": 0.35 }
-    }, "study-area-fill");
+    }, beforeLayer);
     map.addLayer({
         id: `${sourceId}-aura-line`, type: "line", source: sourceId,
         filter: ["==", ["get", "is_aura"], true],
         paint: { "line-color": "#FFD700", "line-width": 2 }
-    }, "study-area-fill");
+    }, beforeLayer);
 
     addPopup(sourceId, ["-aura-fill", "-other-fill"], (props) => `
         <div style="color:#1a1a2e;font-size:13px;max-width:260px">
@@ -393,29 +482,29 @@ function enableMiningRightsLayers(sourceId) {
     `);
 }
 
-function enableMiningAvailableLayers(sourceId) {
+function enableMiningAvailableLayers(sourceId, beforeLayer) {
     // Outros minerais — cinza claro
     map.addLayer({
         id: `${sourceId}-other-fill`, type: "fill", source: sourceId,
         filter: ["==", ["get", "is_ouro"], false],
         paint: { "fill-color": "#8B8B8B", "fill-opacity": 0.2 }
-    }, "study-area-fill");
+    }, beforeLayer);
     map.addLayer({
         id: `${sourceId}-other-line`, type: "line", source: sourceId,
         filter: ["==", ["get", "is_ouro"], false],
         paint: { "line-color": "#8B8B8B", "line-width": 1, "line-dasharray": [2, 1] }
-    }, "study-area-fill");
+    }, beforeLayer);
     // Ouro — vermelho/coral
     map.addLayer({
         id: `${sourceId}-aura-fill`, type: "fill", source: sourceId,
         filter: ["==", ["get", "is_ouro"], true],
         paint: { "fill-color": "#FF4444", "fill-opacity": 0.3 }
-    }, "study-area-fill");
+    }, beforeLayer);
     map.addLayer({
         id: `${sourceId}-aura-line`, type: "line", source: sourceId,
         filter: ["==", ["get", "is_ouro"], true],
         paint: { "line-color": "#FF4444", "line-width": 2 }
-    }, "study-area-fill");
+    }, beforeLayer);
 
     addPopup(sourceId, ["-aura-fill", "-other-fill"], (props) => `
         <div style="color:#1a1a2e;font-size:13px;max-width:280px">
@@ -428,15 +517,15 @@ function enableMiningAvailableLayers(sourceId) {
     `);
 }
 
-function enableGeologyLayers(sourceId) {
+function enableGeologyLayers(sourceId, beforeLayer) {
     map.addLayer({
         id: `${sourceId}-fill`, type: "fill", source: sourceId,
         paint: { "fill-color": ["get", "color"], "fill-opacity": 0.4 }
-    }, "study-area-fill");
+    }, beforeLayer);
     map.addLayer({
         id: `${sourceId}-line`, type: "line", source: sourceId,
         paint: { "line-color": ["get", "color"], "line-width": 1, "line-opacity": 0.8 }
-    }, "study-area-fill");
+    }, beforeLayer);
 
     addPopup(sourceId, ["-fill"], (props) => `
         <div style="color:#1a1a2e;font-size:13px;max-width:280px">
@@ -448,7 +537,7 @@ function enableGeologyLayers(sourceId) {
     `);
 }
 
-function enableOccurrenceLayers(sourceId) {
+function enableOccurrenceLayers(sourceId, beforeLayer) {
     map.addLayer({
         id: `${sourceId}-circle`, type: "circle", source: sourceId,
         paint: {
@@ -458,7 +547,7 @@ function enableOccurrenceLayers(sourceId) {
             "circle-stroke-width": 1,
             "circle-opacity": 0.9,
         }
-    }, "study-area-fill");
+    }, beforeLayer);
 
     addPopup(sourceId, ["-circle"], (props) => `
         <div style="color:#1a1a2e;font-size:13px;max-width:260px">
@@ -591,7 +680,7 @@ async function openPropertiesPanel(layerId) {
 
     if (supportsColormap && !layerStats[layerId]) {
         try {
-            const resp = await fetch(`/api/tiles/${layerId}/stats`);
+            const resp = await fetch(`/api/areas/${currentAreaId}/tiles/${layerId}/stats`);
             if (resp.ok) {
                 layerStats[layerId] = await resp.json();
             }
@@ -689,7 +778,7 @@ function rebuildTileUrl(layerId) {
     const vmin = p.vmin !== null ? p.vmin : (stats ? stats.p2 : null);
     const vmax = p.vmax !== null ? p.vmax : (stats ? stats.p98 : null);
 
-    let url = `/api/tiles/${layerId}/{z}/{x}/{y}.png?colormap=${p.colormap}`;
+    let url = `/api/areas/${currentAreaId}/tiles/${layerId}/{z}/{x}/{y}.png?colormap=${p.colormap}`;
     if (vmin !== null) url += `&vmin=${vmin}`;
     if (vmax !== null) url += `&vmax=${vmax}`;
 

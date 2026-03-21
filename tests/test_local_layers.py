@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 def test_layers_list_includes_local():
     from backend.main import app
     client = TestClient(app)
-    resp = client.get("/api/layers")
+    resp = client.get("/api/areas/paiol/layers")
     assert resp.status_code == 200
     layers = resp.json()["layers"]
     local_layers = [l for l in layers if l["source"] == "local"]

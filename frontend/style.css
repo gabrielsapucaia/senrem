@@ -79,6 +79,22 @@ body {
     color: #888;
 }
 
+.area-selector {
+    width: 100%;
+    padding: 6px 8px;
+    background: #0f3460;
+    color: #e0e0e0;
+    border: 1px solid #1a4a8a;
+    border-radius: 4px;
+    font-size: 13px;
+    margin-bottom: 8px;
+    cursor: pointer;
+}
+
+.area-selector:hover {
+    background: #1a4a8a;
+}
+
 .layer-group-header {
     font-size: 11px;
     text-transform: uppercase;

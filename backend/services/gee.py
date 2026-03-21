@@ -135,6 +135,11 @@ class GEEService:
         )
         self._region = self._center.buffer(settings.study_area_radius_km * 1000)
 
+    def set_area(self, center_lon, center_lat, radius_km):
+        """Define uma nova area de estudo para downloads."""
+        self._center = ee.Geometry.Point(center_lon, center_lat)
+        self._region = self._center.buffer(radius_km * 1000)
+
     def get_study_area_bbox(self):
         return self._region.bounds().getInfo()
 
@@ -413,25 +418,25 @@ class GEEService:
     def _get_download_config(self, layer_id):
         """Retorna (scale, grid_size) para download de cada layer.
 
-        Layers com computacao pesada (S2 mediana 512 imgs, ASTER PCA com
-        normalizacao) precisam de grid para nao exceder memoria do GEE.
+        Escalado para area de ~200km de lado (raio 100km).
+        Layers com computacao pesada precisam de grid maior.
         """
         if layer_id == "gee-pca-tir":
-            return 100, 1
+            return 90, 1   # ASTER TIR nativo: 90m
         elif layer_id in ("gee-crosta-oh", "gee-ninomiya-aloh", "gee-ninomiya-mgoh"):
-            return 60, 1
+            return 30, 1   # ASTER SWIR nativo: 30m
         elif layer_id in ("gee-crosta-feox", "gee-ninomiya-ferrous"):
-            return 30, 2  # ASTER VNIR: 30m, 2x2 grid (normalizacao pesada)
+            return 15, 3   # ASTER VNIR nativo: 15m, 3x3 grid
         elif layer_id.startswith("gee-"):
             return 30, 1
         elif layer_id == "dem":
-            return 30, 1
+            return 30, 1   # SRTM nativo: 30m
         elif "ASTER" in LAYER_CONFIGS[layer_id].get("collection", ""):
             return 90, 1
         elif self.is_rgb_layer(layer_id):
-            return 20, 4  # S2 RGB: 20m, 4x4 grid
+            return 10, 4   # S2 RGB nativo: 10m, 4x4 grid
         else:
-            return 20, 3  # S2 ratios: 20m, 3x3 grid
+            return 20, 3   # S2 ratios (SWIR): 20m nativo, 3x3 grid
 
     def is_rgb_layer(self, layer_id):
         """True se a layer e multi-banda RGB."""
