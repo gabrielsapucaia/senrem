@@ -65,20 +65,15 @@ class VectorService:
         return buffer.to_crs("EPSG:4326").iloc[0]
 
     def process_mining_rights(self) -> dict:
-        """Processa shapefile ANM: clip pela area de estudo + classificacao Aura."""
+        """Processa shapefile ANM: todo o Tocantins + classificacao Aura."""
         shp_path = self._find_shapefile()
         gdf = gpd.read_file(shp_path)
 
         if gdf.crs and gdf.crs.to_epsg() != 4326:
             gdf = gdf.to_crs("EPSG:4326")
 
-        study_area = self._build_study_area()
-        gdf = gdf[gdf.intersects(study_area)].copy()
-
         if gdf.empty:
             return {"type": "FeatureCollection", "features": []}
-
-        gdf = gdf.clip(study_area)
 
         gdf["is_aura"] = gdf["NOME"].str.contains("AURA", case=False, na=False)
 
@@ -93,7 +88,7 @@ class VectorService:
             json.dump(geojson, f)
 
         self._cache["mining-rights"] = geojson
-        print(f"Direitos minerarios: {len(geojson['features'])} poligonos na area de estudo")
+        print(f"Direitos minerarios: {len(geojson['features'])} poligonos no Tocantins")
         return geojson
 
     def process_mining_available(self) -> dict:
