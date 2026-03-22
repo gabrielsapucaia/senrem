@@ -5,7 +5,12 @@
 Sistema de sensoriamento remoto voltado a exploracao de ouro em Greenstone Belts.
 FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados geoespaciais.
 
-**Area de estudo:** Raio de 25km em torno de -11.699153, -47.155531 (Greenstone Belt Natividade/Almas, Tocantins, Brasil).
+**Areas de estudo (multi-area):**
+- **Paiol (Almas):** -11.699153, -47.155531, raio 30km (default)
+- **Engegold:** -11.618848, -47.749978, raio 30km
+- **Principe:** -11.926552, -47.610254, raio 30km
+
+Todas no Greenstone Belt Natividade/Almas, Tocantins, Brasil.
 
 **Objetivo final:** Dashboard web com layers de sensoriamento remoto (espectral, terreno, geofisica) e modelo de prospectividade mineral (knowledge-driven + data-driven) para rankeamento de alvos de ouro.
 
@@ -93,11 +98,13 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 - Gaps de cobertura sao inerentes ao catalogo ASTER L1T no GEE (menos cenas validas, especialmente na seca)
 - **Layers GEE servidas localmente como COGs** (nao usa mais getMapId)
 - Download via `ee.Image.getDownloadURL()` → salva como GeoTIFF em `data/rasters/processed/`
-- Download em grid paralelo para layers pesadas (S2 mediana 512 imgs excede memoria GEE):
-  - S2 RGB: 20m, grid 4x4 (16 partes, 4 threads paralelas)
-  - S2 ratios: 20m, grid 3x3 (9 partes)
-  - ASTER VNIR (crosta-feox, ninomiya-ferrous): 30m, grid 2x2 (4 partes)
-  - ASTER SWIR/TIR/DEM: download direto sem grid (60-100m)
+- Download em grid paralelo para layers pesadas (raio 30km excede memoria GEE):
+  - S2 RGB 10m: grid 7x7 (49 partes, 4 threads paralelas)
+  - S2 ratios 20m: grid 5x5 (25 partes)
+  - ASTER VNIR 15m (crosta-feox, ninomiya-ferrous): grid 8x8 (64 partes)
+  - ASTER SWIR 30m: grid 3x3 (9 partes)
+  - ASTER TIR 90m: grid 2x2 (4 partes)
+  - DEM: download direto (leve)
 - Mosaic local com `rasterio.merge` apos download em grid
 - TileService com suporte a COGs RGB (3 bandas) e single-band (colormap)
 - TileOutsideBounds retorna tile transparente (nao 500)
@@ -140,9 +147,10 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 - **Deploy automatico:** push no GitHub dispara rebuild na Railway
 - **GEE init resiliente:** se GEE falhar no init, app sobe sem GEE (layers existentes no disco funcionam)
 - **COGs corrompidos:** startup ignora arquivos vazios/corrompidos (remove e loga aviso)
-- **28+ layers disponíveis** em producao (COGs enviados via endpoint temporario de upload)
+- **COGs enviados** via endpoint temporario de upload (removido apos popular)
 - **Plano trial:** 30 dias ou $5.00, 512MB RAM — download GEE com grid pode crashar por OOM
-- 59 testes passando
+- **Producao desatualizada:** precisa re-deploy com COGs multi-area (novo endpoint upload ou HF Spaces)
+- 61 testes passando
 
 ### Fase 4 — Dados CPRM/SGB e Aerogeofísica (CONCLUIDA)
 - Servico CPRM (`backend/services/cprm.py`) — download WFS GeoSGB, cache GeoJSON local
@@ -166,6 +174,29 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 - Design: `docs/plans/2026-03-15-fase4-cprm-design.md`
 - Plano: `docs/plans/2026-03-15-fase4-implementation.md`
 
+### Reestruturacao Multi-Area (CONCLUIDA)
+- Backend reestruturado: rotas `/api/layers` → `/api/areas/{area_id}/layers`
+- 3 areas de estudo: paiol (default), engegold, principe — configuradas em `config.py` STUDY_AREAS
+- Frontend com seletor de area (dropdown), troca de area recarrega layers e recentra mapa
+- COGs organizados em `data/areas/{area_id}/rasters/processed/`
+- Vetoriais globais (mining-rights, mining-available) em `data/vectors/`
+- Vetoriais por area (geologia, ocorrencias) em `data/areas/{area_id}/vectors/`
+- TileService instanciado por area em `main.py` (`tile_services = {area_id: TileService}`)
+- `generate` chama `gee_service.set_area()` antes do download para a area correta
+- Grid de download GEE ajustado para raio 30km (excedia memoria com grids antigos):
+  - S2 RGB 10m: 7x7 grid (49 partes)
+  - S2 ratios 20m: 5x5 grid
+  - ASTER VNIR 15m: 8x8 grid (Crosta FeOx/Ninomiya Fe2+)
+  - ASTER SWIR 30m: 3x3 grid
+  - ASTER TIR 90m: 2x2 grid
+  - Crosta FeOx PCA scale=60 (30 excedia memoria GEE em areas com muitas cenas)
+- **Estado layers por area:**
+  - Paiol: 31/35 (faltam em-resist, em-gradient, lineaments, targets)
+  - Engegold: 25/35 (faltam 6 ASTER local + em + futuras)
+  - Principe: 25/35 (faltam 6 ASTER local + em + futuras)
+- ASTER local sao duplicatas das GEE — versoes GEE suficientes
+- 61 testes passando
+
 ### Fases futuras
 - **Fase 5:** Modelo de prospectividade (weighted overlay, painel de pesos ajustaveis)
 - **Fase 6:** SAR/lineamentos, modelo data-driven (RF/SVM), export de relatorios
@@ -176,10 +207,10 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 senrem3/
 ├── backend/
 │   ├── main.py              # FastAPI app, monta routers + serve frontend
-│   ├── config.py            # Settings: coordenadas, raio, gee_project, gee_service_account_key
+│   ├── config.py            # Settings + STUDY_AREAS: 3 areas, raio 30km, gee_project
 │   ├── api/
 │   │   ├── config_routes.py # GET /api/config, GET /api/health
-│   │   └── layers.py        # GET /api/layers, POST /api/layers/{id}/generate
+│   │   └── layers.py        # GET /api/areas/{area_id}/layers, POST generate, preload
 │   ├── services/
 │   │   ├── gee.py           # GEEService: 13 layers GEE (S2+ASTER L1T+GED)
 │   │   │                    # PCA via eigen, ratios, download COG com grid paralelo
@@ -196,8 +227,8 @@ senrem3/
 │   ├── index.html           # SPA: header, sidebar, mapa, status bar
 │   ├── style.css            # Tema escuro (#1a1a2e, #16213e, #e94560)
 │   └── app.js               # MapLibre GL JS, enableLayer/disableLayer, basemaps
-├── tests/                   # 59 testes (pytest + FastAPI TestClient)
-├── data/                    # rasters/, vectors/, tiles/ (gitignored)
+├── tests/                   # 61 testes (pytest + FastAPI TestClient)
+├── data/                    # areas/{id}/rasters/processed/, vectors/ (gitignored)
 ├── docs/plans/              # Design + planos de cada fase
 ├── Dockerfile               # Deploy: python:3.11-slim + libgdal-dev
 ├── .dockerignore            # Exclui data/, .env, .git/, docs/, tests/
@@ -212,7 +243,7 @@ senrem3/
 ```bash
 source .venv/bin/activate
 python -m backend.main          # servidor em http://localhost:8000
-python -m pytest tests/ -v      # 38 testes
+python -m pytest tests/ -v      # 61 testes
 ```
 
 ### Deploy (Railway)
@@ -237,13 +268,13 @@ railway variables               # ver/editar variaveis de ambiente
 | Metodo | Rota | Descricao |
 |--------|------|-----------|
 | GET | `/api/health` | Health check |
-| GET | `/api/config` | Retorna centro, raio, nome da area de estudo |
-| GET | `/api/layers` | Lista 33 layers `{layers, loading, loaded, total}` |
-| POST | `/api/layers/{id}/generate` | Baixa COG GEE/local e retorna tile_url local |
-| POST | `/api/layers/refresh` | Apaga COGs GEE e re-baixa do zero em background |
-| GET | `/api/tiles/{layer_id}/{z}/{x}/{y}.png` | Serve tiles de COGs locais (aceita ?colormap, ?vmin, ?vmax) |
-| GET | `/api/tiles/{layer_id}/stats` | Retorna percentis p2/p98 da layer para sliders min/max |
-| GET | `/api/vectors/{layer_id}.geojson` | Retorna GeoJSON de layer vetorial (geologia, ocorrencias, ANM) |
+| GET | `/api/config` | Retorna areas de estudo, centro, raio, default_area |
+| GET | `/api/areas/{area_id}/layers` | Lista 35 layers `{layers, loading, loaded, total}` |
+| POST | `/api/areas/{area_id}/layers/{id}/generate` | Baixa COG GEE/local e retorna tile_url |
+| GET | `/api/areas/{area_id}/tiles/{layer_id}/{z}/{x}/{y}.png` | Serve tiles (aceita ?colormap, ?vmin, ?vmax) |
+| GET | `/api/areas/{area_id}/tiles/{layer_id}/stats` | Retorna percentis p2/p98 para sliders |
+| GET | `/api/areas/{area_id}/vectors/{layer_id}.geojson` | GeoJSON vetorial por area (geologia, ocorrencias) |
+| GET | `/api/vectors/{layer_id}.geojson` | GeoJSON vetorial global (mining-rights, mining-available) |
 
 ## Convencoes
 
@@ -264,7 +295,7 @@ railway variables               # ver/editar variaveis de ambiente
 - **Por que FastAPI + vanilla JS?** Controle total, sem overhead de framework frontend, deploy simples
 - **Por que MapLibre GL JS?** Open-source, performatico para tiles raster, suporte a layers
 - **Por que GEE → COG local?** GEE computa (median, PCA, ratios), baixa como GeoTIFF, serve via rio-tiler. Permite colormap/min-max para TODAS as layers.
-- **Grid paralelo:** S2 mediana 512 imgs excede memoria do `getDownloadURL`. Solucao: dividir em grid (3x3 ou 4x4), baixar 4 threads paralelas, mosaic com rasterio
+- **Grid paralelo:** S2 mediana 512 imgs excede memoria do `getDownloadURL`. Solucao: dividir em grid (7x7 S2 RGB, 5x5 ratios, 8x8 VNIR, 3x3 SWIR), 4 threads paralelas, mosaic com rasterio
 - **Janela ago-out 2017-2024:** Otimizada por analise mensal (set e o mes mais seco, jun atrapalha). 2018 excluido (outlier chuvoso). 512 imagens no composite
 - **Mascara NDVI < 0.4:** 62% da area = solo exposto. Analise confirmou que qualityMosaic introduz artefatos (sombras). Mascara urbana desnecessaria (0.11% AOI)
 - **Modelo de prospectividade:** Knowledge-driven (fuzzy/weighted overlay) como base, data-driven (RF/SVM) como complemento
