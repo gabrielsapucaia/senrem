@@ -20,6 +20,12 @@ STUDY_AREAS = {
         "center_lon": -47.61025404303583,
         "radius_km": 30.0,
     },
+    "manduca": {
+        "name": "Manduca",
+        "center_lat": -10.815478,
+        "center_lon": -48.331875,
+        "radius_km": 30.0,
+    },
 }
 
 DEFAULT_AREA = "paiol"
