@@ -1,7 +1,7 @@
 import os
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -91,6 +91,46 @@ def get_vector_geojson(layer_id: str):
     if not geojson:
         raise HTTPException(status_code=404, detail=f"GeoJSON nao encontrado para '{layer_id}'")
     return JSONResponse(content=geojson)
+
+
+# --- Endpoints temporarios de upload (remover apos popular) ---
+
+@app.post("/api/areas/{area_id}/upload/{layer_id}")
+async def upload_area_cog(area_id: str, layer_id: str, file: UploadFile = File(...)):
+    if area_id not in STUDY_AREAS:
+        raise HTTPException(status_code=404, detail=f"Area '{area_id}' nao encontrada")
+    processed_dir = os.path.join(settings.data_dir, "areas", area_id, "rasters", "processed")
+    os.makedirs(processed_dir, exist_ok=True)
+    cog_path = os.path.join(processed_dir, f"{layer_id}.tif")
+    content = await file.read()
+    with open(cog_path, "wb") as f:
+        f.write(content)
+    ts = tile_services.get(area_id)
+    if ts:
+        preload_layers(ts, area_id)
+    return {"status": "ok", "area_id": area_id, "layer_id": layer_id, "size": len(content)}
+
+
+@app.post("/api/areas/{area_id}/vectors/{layer_id}/upload")
+async def upload_area_vector(area_id: str, layer_id: str, request: Request):
+    if area_id not in STUDY_AREAS:
+        raise HTTPException(status_code=404, detail=f"Area '{area_id}' nao encontrada")
+    vectors_dir = os.path.join(settings.data_dir, "areas", area_id, "vectors")
+    os.makedirs(vectors_dir, exist_ok=True)
+    body = await request.body()
+    with open(os.path.join(vectors_dir, f"{layer_id}.geojson"), "wb") as f:
+        f.write(body)
+    return {"status": "ok", "area_id": area_id, "layer_id": layer_id, "size": len(body)}
+
+
+@app.post("/api/vectors/{layer_id}/upload")
+async def upload_global_vector(layer_id: str, request: Request):
+    vectors_dir = os.path.join(settings.data_dir, "vectors")
+    os.makedirs(vectors_dir, exist_ok=True)
+    body = await request.body()
+    with open(os.path.join(vectors_dir, f"{layer_id}.geojson"), "wb") as f:
+        f.write(body)
+    return {"status": "ok", "layer_id": layer_id, "size": len(body)}
 
 
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
