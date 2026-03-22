@@ -9,8 +9,9 @@ FastAPI backend + frontend MapLibre GL JS para visualizacao interativa de dados 
 - **Paiol (Almas):** -11.699153, -47.155531, raio 30km (default)
 - **Engegold:** -11.618848, -47.749978, raio 30km
 - **Principe:** -11.926552, -47.610254, raio 30km
+- **Manduca:** -10.815478, -48.331875, raio 30km
 
-Todas no Greenstone Belt Natividade/Almas, Tocantins, Brasil.
+Tocantins, Brasil. Skill `/add-study-area` para adicionar novas areas.
 
 **Objetivo final:** Dashboard web com layers de sensoriamento remoto (espectral, terreno, geofisica) e modelo de prospectividade mineral (knowledge-driven + data-driven) para rankeamento de alvos de ouro.
 
@@ -194,6 +195,7 @@ Todas no Greenstone Belt Natividade/Almas, Tocantins, Brasil.
   - Paiol: 31/35 (faltam em-resist, em-gradient, lineaments, targets)
   - Engegold: 25/35 (faltam 6 ASTER local + em + futuras)
   - Principe: 25/35 (faltam 6 ASTER local + em + futuras)
+  - Manduca: 25/35 (faltam 6 ASTER local + em + futuras)
 - ASTER local sao duplicatas das GEE — versoes GEE suficientes
 - 61 testes passando
 
