@@ -252,15 +252,16 @@ def save_cog(
 class GeophysicsProcessor:
     """Processador de dados aerogeofisicos XYZ -> COGs interpolados."""
 
-    def __init__(self, data_dir: str, bbox: Tuple[float, float, float, float]):
+    def __init__(self, data_dir: str, bbox: Tuple[float, float, float, float], output_dir: str = None):
         """
         Args:
             data_dir: Diretorio raiz dos dados (contem aerogeofisica/).
             bbox: (lon_min, lat_min, lon_max, lat_max) da area de estudo.
+            output_dir: Diretorio de saida dos COGs (default: data_dir/rasters/processed).
         """
         self.data_dir = data_dir
         self.bbox = bbox
-        self.output_dir = os.path.join(data_dir, "rasters", "processed")
+        self.output_dir = output_dir or os.path.join(data_dir, "rasters", "processed")
         self.zip_path = os.path.join(
             data_dir, "aerogeofisica", "1073_tocantins", "1073-XYZ.zip"
         )

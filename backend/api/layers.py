@@ -219,6 +219,8 @@ def generate_layer(area_id: str, layer_id: str):
 
         if not os.path.exists(cog_path):
             try:
+                area_config = STUDY_AREAS[area_id]
+                gee_service.set_area(area_config["center_lon"], area_config["center_lat"], area_config["radius_km"])
                 gee_service.download_layer_cog(layer_id, cog_path)
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))

@@ -337,7 +337,7 @@ class GEEService:
             bands = ["B01", "B02", "B3N"]
             l1t = self._get_aster_l1t_improved(bands, normalize=True)
             result = self._build_crosta_gee(
-                l1t, bands, target_band=2, contrast_band=0, scale=30,
+                l1t, bands, target_band=2, contrast_band=0, scale=60,
             )
             return self._smooth(result)
 
@@ -418,25 +418,25 @@ class GEEService:
     def _get_download_config(self, layer_id):
         """Retorna (scale, grid_size) para download de cada layer.
 
-        Escalado para area de ~200km de lado (raio 100km).
-        Layers com computacao pesada precisam de grid maior.
+        PCA/Crosta ASTER com normalizacao por cena sao computacionalmente pesados
+        e excedem o limite de memoria do GEE em regioes grandes — precisam de grid.
         """
         if layer_id == "gee-pca-tir":
-            return 90, 1   # ASTER TIR nativo: 90m
+            return 90, 2   # ASTER TIR 90m, PCA pesado
         elif layer_id in ("gee-crosta-oh", "gee-ninomiya-aloh", "gee-ninomiya-mgoh"):
-            return 30, 1   # ASTER SWIR nativo: 30m
+            return 30, 3   # ASTER SWIR 30m, PCA/ratio pesado
         elif layer_id in ("gee-crosta-feox", "gee-ninomiya-ferrous"):
-            return 15, 3   # ASTER VNIR nativo: 15m, 3x3 grid
+            return 15, 8   # ASTER VNIR 15m, PCA pesado, 8x8 grid
         elif layer_id.startswith("gee-"):
-            return 30, 1
+            return 30, 2
         elif layer_id == "dem":
-            return 30, 1   # SRTM nativo: 30m
+            return 30, 1   # SRTM 30m, leve
         elif "ASTER" in LAYER_CONFIGS[layer_id].get("collection", ""):
-            return 90, 1
+            return 90, 2
         elif self.is_rgb_layer(layer_id):
-            return 10, 4   # S2 RGB nativo: 10m, 4x4 grid
+            return 10, 7   # S2 RGB 10m, median 512 imgs, 7x7 grid
         else:
-            return 20, 3   # S2 ratios (SWIR): 20m nativo, 3x3 grid
+            return 20, 5   # S2 ratios (SWIR) 20m, 5x5 grid
 
     def is_rgb_layer(self, layer_id):
         """True se a layer e multi-banda RGB."""
